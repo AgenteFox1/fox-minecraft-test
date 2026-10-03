@@ -18,16 +18,37 @@ jobs:
         run: |
           java -version
 
-      - name: Baixar Paper
+      - name: Baixar Paper 1.21.11
         run: |
           mkdir minecraft
           cd minecraft
 
-          echo "Baixando Paper 1.21.11..."
+          echo "Consultando PaperMC..."
+
+          RESPONSE=$(curl -fsSL \
+            -H "User-Agent: fox-minecraft-test/1.0" \
+            "https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds")
+
+          echo "$RESPONSE"
+
+          DOWNLOAD_URL=$(echo "$RESPONSE" | \
+            jq -r 'map(select(.channel == "STABLE")) | .[0].downloads["server:default"].url')
+
+          BUILD=$(echo "$RESPONSE" | \
+            jq -r 'map(select(.channel == "STABLE")) | .[0].id')
+
+          echo "Build encontrado: $BUILD"
+          echo "URL: $DOWNLOAD_URL"
+
+          if [ "$DOWNLOAD_URL" = "null" ] || [ -z "$DOWNLOAD_URL" ]; then
+            echo "Nenhum build estável encontrado!"
+            exit 1
+          fi
 
           curl -fL \
+            -H "User-Agent: fox-minecraft-test/1.0" \
             -o paper.jar \
-            "https://api.papermc.io/v2/projects/paper/versions/1.21.11/builds/126/downloads/paper-1.21.11-126.jar"
+            "$DOWNLOAD_URL"
 
           ls -lh paper.jar
 
