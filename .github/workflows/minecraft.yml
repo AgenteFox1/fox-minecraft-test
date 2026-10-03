@@ -14,49 +14,53 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Verificar Java
-        run: |
-          java -version
-
       - name: Baixar Paper 1.21.11
         run: |
           mkdir minecraft
           cd minecraft
 
-          echo "Consultando PaperMC..."
-
           RESPONSE=$(curl -fsSL \
             -H "User-Agent: fox-minecraft-test/1.0" \
             "https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds")
 
-          echo "$RESPONSE"
-
           DOWNLOAD_URL=$(echo "$RESPONSE" | \
             jq -r 'map(select(.channel == "STABLE")) | .[0].downloads["server:default"].url')
 
-          BUILD=$(echo "$RESPONSE" | \
-            jq -r 'map(select(.channel == "STABLE")) | .[0].id')
-
-          echo "Build encontrado: $BUILD"
-          echo "URL: $DOWNLOAD_URL"
-
-          if [ "$DOWNLOAD_URL" = "null" ] || [ -z "$DOWNLOAD_URL" ]; then
-            echo "Nenhum build estável encontrado!"
-            exit 1
-          fi
+          echo "Download: $DOWNLOAD_URL"
 
           curl -fL \
             -H "User-Agent: fox-minecraft-test/1.0" \
             -o paper.jar \
             "$DOWNLOAD_URL"
 
-          ls -lh paper.jar
-
       - name: Aceitar EULA
         run: |
           echo "eula=true" > minecraft/eula.txt
 
-      - name: Iniciar Paper
+      - name: Baixar Playit
+        run: |
+          mkdir playit
+          cd playit
+
+          curl -L \
+            -o playit \
+            https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
+
+          chmod +x playit
+
+          ./playit --version
+
+      - name: Iniciar Playit
+        run: |
+          cd playit
+
+          nohup ./playit > playit.log 2>&1 &
+
+          sleep 5
+
+          cat playit.log
+
+      - name: Iniciar Minecraft
         run: |
           cd minecraft
           java -Xms2G -Xmx8G -jar paper.jar nogui
