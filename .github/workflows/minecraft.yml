@@ -8,10 +8,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Instalar Java
-        run: |
-          sudo apt update
-          sudo apt install -y openjdk-21-jre-headless
+      - name: Configurar Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
 
       - name: Verificar Java
         run: |
