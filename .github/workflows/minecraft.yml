@@ -48,8 +48,6 @@ jobs:
 
           chmod +x playit
 
-          ./playit --version
-
       - name: Iniciar Playit
         run: |
           cd playit
