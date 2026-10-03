@@ -19,6 +19,8 @@ jobs:
           mkdir minecraft
           cd minecraft
 
+          echo "Consultando PaperMC..."
+
           RESPONSE=$(curl -fsSL \
             -H "User-Agent: fox-minecraft-test/1.0" \
             "https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds")
@@ -33,6 +35,8 @@ jobs:
             -o paper.jar \
             "$DOWNLOAD_URL"
 
+          ls -lh paper.jar
+
       - name: Aceitar EULA
         run: |
           echo "eula=true" > minecraft/eula.txt
@@ -42,7 +46,7 @@ jobs:
           mkdir playit
           cd playit
 
-          curl -L \
+          curl -fL \
             -o playit \
             https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
 
@@ -50,13 +54,11 @@ jobs:
 
       - name: Iniciar Playit
         run: |
+          mkdir -p "$HOME/.config/playit_gg"
+
           cd playit
 
-          nohup ./playit > playit.log 2>&1 &
-
-          sleep 5
-
-          cat playit.log
+          ./playit
 
       - name: Iniciar Minecraft
         run: |
