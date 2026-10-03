@@ -4,16 +4,38 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  minecraft:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Testar máquina
+      - name: Instalar Java
         run: |
-          echo "Minecraft test iniciado!"
-          echo "CPU:"
-          nproc
-          echo "RAM:"
-          free -h
-          echo "Sistema:"
-          lsb_release -a
+          sudo apt update
+          sudo apt install -y openjdk-21-jre-headless
+
+      - name: Verificar Java
+        run: |
+          java -version
+
+      - name: Baixar Paper 1.21.11
+        run: |
+          mkdir minecraft
+          cd minecraft
+
+          BUILD=$(curl -s https://api.papermc.io/v2/projects/paper/versions/1.21.11 | \
+            python3 -c "import sys,json; print(json.load(sys.stdin)['builds'][-1])")
+
+          echo "Build encontrado: $BUILD"
+
+          curl -L \
+            -o paper.jar \
+            "https://api.papermc.io/v2/projects/paper/versions/1.21.11/builds/$BUILD/downloads/paper-1.21.11-$BUILD.jar"
+
+      - name: Aceitar EULA
+        run: |
+          echo "eula=true" > minecraft/eula.txt
+
+      - name: Iniciar Paper
+        run: |
+          cd minecraft
+          java -Xms2G -Xmx8G -jar paper.jar nogui
