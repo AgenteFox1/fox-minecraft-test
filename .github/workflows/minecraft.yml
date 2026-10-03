@@ -17,28 +17,17 @@ jobs:
       - name: Verificar Java
         run: |
           java -version
-          echo "JAVA_HOME=$JAVA_HOME"
 
-      - name: Baixar Paper 1.21.11
+      - name: Baixar Paper
         run: |
           mkdir minecraft
           cd minecraft
 
-          echo "Consultando PaperMC..."
-
-          RESPONSE=$(curl -fsSL \
-            "https://api.papermc.io/v2/projects/paper/versions/1.21.11")
-
-          echo "$RESPONSE"
-
-          BUILD=$(echo "$RESPONSE" | \
-            python3 -c "import sys,json; data=json.load(sys.stdin); print(data['builds'][-1])")
-
-          echo "Build encontrado: $BUILD"
+          echo "Baixando Paper 1.21.11..."
 
           curl -fL \
             -o paper.jar \
-            "https://api.papermc.io/v2/projects/paper/versions/1.21.11/builds/$BUILD/downloads/paper-1.21.11-$BUILD.jar"
+            "https://api.papermc.io/v2/projects/paper/versions/1.21.11/builds/126/downloads/paper-1.21.11-126.jar"
 
           ls -lh paper.jar
 
