@@ -9,7 +9,7 @@ jobs:
 
     steps:
       - name: Configurar Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -17,20 +17,30 @@ jobs:
       - name: Verificar Java
         run: |
           java -version
+          echo "JAVA_HOME=$JAVA_HOME"
 
       - name: Baixar Paper 1.21.11
         run: |
           mkdir minecraft
           cd minecraft
 
-          BUILD=$(curl -s https://api.papermc.io/v2/projects/paper/versions/1.21.11 | \
-            python3 -c "import sys,json; print(json.load(sys.stdin)['builds'][-1])")
+          echo "Consultando PaperMC..."
+
+          RESPONSE=$(curl -fsSL \
+            "https://api.papermc.io/v2/projects/paper/versions/1.21.11")
+
+          echo "$RESPONSE"
+
+          BUILD=$(echo "$RESPONSE" | \
+            python3 -c "import sys,json; data=json.load(sys.stdin); print(data['builds'][-1])")
 
           echo "Build encontrado: $BUILD"
 
-          curl -L \
+          curl -fL \
             -o paper.jar \
             "https://api.papermc.io/v2/projects/paper/versions/1.21.11/builds/$BUILD/downloads/paper-1.21.11-$BUILD.jar"
+
+          ls -lh paper.jar
 
       - name: Aceitar EULA
         run: |
