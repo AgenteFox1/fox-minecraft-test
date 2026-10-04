@@ -77,19 +77,97 @@ jobs:
 
           ls -lh minecraft/*.zip
 
-      - name: Baixar PlayerData do Google Drive
+      - name: Instalar PlayerData
         run: |
           echo "========================================"
-          echo "BAIXANDO PLAYERDATA"
+          echo "DIAGNOSTICO DO PLAYERDATA"
           echo "========================================"
 
-          gdown \
-            "https://drive.google.com/uc?id=1-Vxic8YNeUNq-B5HFHmx1VylLRYyozW4" \
-            -O minecraft/playerdata.zip
+          cd minecraft
 
           echo ""
-          echo "PlayerData baixado:"
-          ls -lh minecraft/playerdata.zip
+          echo "1. ARQUIVO BAIXADO:"
+          ls -lh playerdata.zip
+
+          echo ""
+          echo "2. CONTEUDO COMPLETO DO ZIP:"
+          unzip -l playerdata.zip
+
+          echo ""
+          echo "3. EXTRAINDO PARA UMA PASTA TEMPORARIA:"
+          rm -rf playerdata_temp
+          mkdir playerdata_temp
+
+          unzip -o playerdata.zip -d playerdata_temp
+
+          echo ""
+          echo "4. ESTRUTURA EXTRAIDA:"
+          find playerdata_temp -maxdepth 5 -print
+
+          echo ""
+          echo "5. ARQUIVOS .DAT:"
+          find playerdata_temp -type f -name "*.dat" -print
+
+          echo ""
+          echo "6. QUANTIDADE DE .DAT:"
+          find playerdata_temp -type f -name "*.dat" | wc -l
+
+          echo ""
+          echo "========================================"
+          echo "PROCURANDO PLAYERDATA"
+          echo "========================================"
+
+          PLAYERDATA_DIR=$(find playerdata_temp -type d -name "playerdata" | head -1)
+
+          if [ -n "$PLAYERDATA_DIR" ]; then
+
+            echo "PlayerData encontrado em:"
+            echo "$PLAYERDATA_DIR"
+
+            mkdir -p world/playerdata
+
+            cp -av "$PLAYERDATA_DIR"/* world/playerdata/ 2>/dev/null || true
+
+            echo ""
+            echo "PlayerData instalado em:"
+            echo "world/playerdata/"
+
+            echo ""
+            echo "Arquivos instalados:"
+            ls -lah world/playerdata
+
+            echo ""
+            echo "Quantidade:"
+            find world/playerdata -type f -name "*.dat" | wc -l
+
+          else
+
+            echo "========================================"
+            echo "ERRO: PLAYERDATA NAO ENCONTRADO"
+            echo "========================================"
+
+            echo ""
+            echo "Nenhuma pasta chamada playerdata foi encontrada."
+
+            echo ""
+            echo "Arquivos encontrados:"
+            find playerdata_temp -type f -print
+
+            echo ""
+            echo "Pastas encontradas:"
+            find playerdata_temp -type d -print
+
+          fi
+
+          echo ""
+          echo "Removendo arquivos temporarios..."
+          rm -rf playerdata_temp
+          rm -f playerdata.zip
+
+          echo ""
+          echo "========================================"
+          echo "FIM DO DIAGNOSTICO"
+          echo "========================================"
 
       - name: Instalar mapas
         run: |
