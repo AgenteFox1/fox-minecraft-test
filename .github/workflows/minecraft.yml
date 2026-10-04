@@ -76,11 +76,15 @@ jobs:
 
           python3 -m pip install --upgrade pip
           python3 -m pip install gdown
+          python3 -m pip install nbtlib
 
           echo ""
-          echo "Versao do gdown:"
-
+          echo "gdown:"
           gdown --version
+
+          echo ""
+          echo "nbtlib:"
+          python3 -c "import nbtlib; print(nbtlib.__version__)"
 
 
       # ==========================================
@@ -179,7 +183,7 @@ jobs:
 
 
       # ==========================================
-      # PLAYERDATA
+      # BAIXAR PLAYERDATA
       # ==========================================
 
       - name: Baixar PlayerData do Google Drive
@@ -217,7 +221,7 @@ jobs:
 
 
       # ==========================================
-      # INSTALAR PLAYERDATA
+      # LER E INSTALAR PLAYERDATA
       # ==========================================
 
       - name: Instalar PlayerData
@@ -229,20 +233,11 @@ jobs:
           cd minecraft
 
           echo ""
-          echo "Arquivo recebido:"
-
-          file playerdata.gz
-
-          ls -lh playerdata.gz
-
-          echo ""
-          echo "========================================"
-          echo "VALIDANDO GZIP"
-          echo "========================================"
+          echo "Validando GZIP..."
 
           if ! gzip -t playerdata.gz; then
             echo ""
-            echo "ERRO: O PLAYERDATA NAO E UM GZIP VALIDO."
+            echo "ERRO: GZIP INVALIDO."
             exit 1
           fi
 
@@ -251,127 +246,192 @@ jobs:
 
           echo ""
           echo "========================================"
-          echo "DESCOMPACTANDO PLAYERDATA"
+          echo "DESCOMPACTANDO"
           echo "========================================"
 
-          rm -rf playerdata_temp
-
-          mkdir playerdata_temp
-
-          gzip -dc playerdata.gz > playerdata_temp/playerdata.dat
+          gzip -dc playerdata.gz > playerdata.dat
 
           echo ""
           echo "Arquivo descompactado:"
 
-          ls -lh playerdata_temp/playerdata.dat
-
-          echo ""
-          echo "Tipo:"
-
-          file playerdata_temp/playerdata.dat
+          ls -lh playerdata.dat
 
           echo ""
           echo "========================================"
-          echo "PROCURANDO UUID NO NOME ORIGINAL"
+          echo "LENDO NBT DO PLAYER"
           echo "========================================"
 
-          echo ""
-          echo "Informacoes do GZIP:"
+          python3 << 'PY'
+          import nbtlib
+          import uuid
+          import os
+          import shutil
 
-          gzip -lv playerdata.gz || true
+          source = "playerdata.dat"
+          output_dir = "world/playerdata"
+
+          print("")
+          print("Carregando NBT...")
+          print("Arquivo:", source)
+
+          try:
+              nbt = nbtlib.load(source, gzipped=False)
+          except Exception as e:
+              print("")
+              print("ERRO AO LER NBT:")
+              print(e)
+              raise SystemExit(1)
+
+          print("")
+          print("NBT carregado com sucesso!")
+
+          print("")
+          print("Tags principais:")
+
+          for key in nbt.keys():
+              print(" -", key)
+
+          print("")
+          print("Procurando UUID...")
+
+          root = nbt.root
+
+          found_uuid = None
+
+          # ------------------------------------------
+          # Tentativa 1: UUID diretamente
+          # ------------------------------------------
+
+          if "UUID" in root:
+              value = root["UUID"]
+
+              print("")
+              print("Tag UUID encontrada:")
+              print(value)
+
+              try:
+                  values = [int(x) for x in value]
+
+                  if len(values) == 4:
+                      b = b"".join(
+                          int(x & 0xffffffff).to_bytes(
+                              4,
+                              byteorder="big",
+                              signed=False
+                          )
+                          for x in values
+                      )
+
+                      found_uuid = str(uuid.UUID(bytes=b))
+
+              except Exception as e:
+                  print("Nao foi possivel converter UUID:", e)
+
+          # ------------------------------------------
+          # Tentativa 2: UUIDMost / UUIDLeast
+          # ------------------------------------------
+
+          if found_uuid is None:
+              if "UUIDMost" in root and "UUIDLeast" in root:
+
+                  print("")
+                  print("Encontrados UUIDMost e UUIDLeast.")
+
+                  most = int(root["UUIDMost"])
+                  least = int(root["UUIDLeast"])
+
+                  most &= (1 << 64) - 1
+                  least &= (1 << 64) - 1
+
+                  raw = (
+                      most.to_bytes(8, byteorder="big") +
+                      least.to_bytes(8, byteorder="big")
+                  )
+
+                  found_uuid = str(uuid.UUID(bytes=raw))
+
+          # ------------------------------------------
+          # Resultado
+          # ------------------------------------------
+
+          if found_uuid is None:
+
+              print("")
+              print("========================================")
+              print("UUID NAO ENCONTRADO")
+              print("========================================")
+
+              print("")
+              print("Tags disponiveis:")
+
+              for key in root.keys():
+                  print(key)
+
+              raise SystemExit(1)
+
+          print("")
+          print("========================================")
+          print("UUID ENCONTRADO")
+          print("========================================")
+
+          print("")
+          print("UUID:")
+          print(found_uuid)
+
+          # ------------------------------------------
+          # Criar pasta playerdata
+          # ------------------------------------------
+
+          os.makedirs(output_dir, exist_ok=True)
+
+          destination = os.path.join(
+              output_dir,
+              found_uuid + ".dat"
+          )
+
+          print("")
+          print("Destino:")
+          print(destination)
+
+          shutil.copyfile(source, destination)
+
+          print("")
+          print("========================================")
+          print("PLAYERDATA INSTALADO")
+          print("========================================")
+
+          print("")
+          print("Arquivo:")
+          print(destination)
+
+          print("")
+          print("Tamanho:")
+          print(os.path.getsize(destination), "bytes")
+
+          PY
 
           echo ""
           echo "========================================"
-          echo "ARQUIVOS DAT ENCONTRADOS"
+          echo "PLAYERDATA FINAL"
           echo "========================================"
-
-          find playerdata_temp -type f -name "*.dat" -print
-
-          echo ""
-          echo "========================================"
-          echo "INSTALANDO PLAYERDATA"
-          echo "========================================"
-
-          mkdir -p world/playerdata
-
-          DAT_FILE=$(find playerdata_temp -type f -name "*.dat" | head -1)
-
-          if [ -z "$DAT_FILE" ]; then
-
-            echo ""
-            echo "ERRO: NENHUM ARQUIVO .DAT FOI ENCONTRADO."
-
-            exit 1
-
-          fi
-
-          echo ""
-          echo "Arquivo encontrado:"
-          echo "$DAT_FILE"
-
-          echo ""
-          echo "Nome:"
-          basename "$DAT_FILE"
-
-          echo ""
-          echo "========================================"
-          echo "VERIFICANDO NOME DO PLAYERDATA"
-          echo "========================================"
-
-          DAT_NAME=$(basename "$DAT_FILE")
-
-          echo ""
-          echo "Nome do arquivo:"
-          echo "$DAT_NAME"
-
-          # Se o arquivo ja tiver um nome UUID.dat,
-          # usamos esse nome diretamente.
-          if [[ "$DAT_NAME" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.dat$ ]]; then
-
-            echo ""
-            echo "UUID encontrado no nome do arquivo!"
-
-            cp -av "$DAT_FILE" "world/playerdata/$DAT_NAME"
-
-          else
-
-            echo ""
-            echo "O arquivo nao possui nome UUID."
-            echo ""
-            echo "PlayerData descompactado:"
-            ls -lah "$DAT_FILE"
-            echo ""
-            echo "O arquivo precisa ser associado ao UUID do jogador."
-            echo ""
-            echo "NAO VAMOS COLOCAR UM NOME ERRADO AUTOMATICAMENTE."
-
-            exit 1
-
-          fi
-
-          echo ""
-          echo "========================================"
-          echo "PLAYERDATA INSTALADO"
-          echo "========================================"
-
-          echo ""
-          echo "Arquivos em world/playerdata:"
 
           ls -lah world/playerdata
 
           echo ""
-          echo "Quantidade de .dat:"
+          echo "Arquivos .dat:"
+
+          find world/playerdata -type f -name "*.dat" -print
+
+          echo ""
+          echo "Quantidade:"
 
           find world/playerdata -type f -name "*.dat" | wc -l
 
           echo ""
-          echo "========================================"
+          echo "Removendo temporarios..."
 
-          rm -rf playerdata_temp
+          rm -f playerdata.dat
           rm -f playerdata.gz
-
-          echo ""
-          echo "Temporarios removidos."
 
           echo ""
           echo "========================================"
@@ -461,18 +521,14 @@ jobs:
           echo "PlayerData:"
 
           if [ -d "world/playerdata" ]; then
-
             ls -lah world/playerdata
 
             echo ""
             echo "Arquivos .dat:"
 
             find world/playerdata -type f -name "*.dat" | wc -l
-
           else
-
             echo "Nenhuma pasta playerdata encontrada."
-
           fi
 
           echo ""
