@@ -33,6 +33,9 @@ jobs:
           echo "BAIXANDO PAPER 1.21.11"
           echo "========================================"
 
+          echo ""
+          echo "Consultando PaperMC..."
+
           RESPONSE=$(curl -fsSL \
             -H "User-Agent: fox-minecraft-test/1.0" \
             "https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds")
@@ -51,6 +54,7 @@ jobs:
 
           echo ""
           echo "Paper baixado:"
+
           ls -lh paper.jar
 
 
@@ -69,8 +73,17 @@ jobs:
 
       - name: Instalar gdown
         run: |
+          echo "========================================"
+          echo "INSTALANDO GDOWN"
+          echo "========================================"
+
           python3 -m pip install --upgrade pip
           python3 -m pip install gdown
+
+          echo ""
+          echo "Versao do gdown:"
+
+          gdown --version
 
 
       # ==========================================
@@ -82,6 +95,8 @@ jobs:
           echo "========================================"
           echo "BAIXANDO MAPAS"
           echo "========================================"
+
+          mkdir -p minecraft
 
           echo ""
           echo "Baixando Overworld..."
@@ -153,8 +168,16 @@ jobs:
           echo "MUNDOS INSTALADOS"
           echo "========================================"
 
+          echo ""
+          echo "Overworld:"
           du -sh world
+
+          echo ""
+          echo "Nether:"
           du -sh world_nether
+
+          echo ""
+          echo "The End:"
           du -sh world_the_end
 
 
@@ -180,8 +203,7 @@ jobs:
           echo "Baixando..."
 
           gdown \
-            --id "$PLAYERDATA_ID" \
-            --fuzzy \
+            "$PLAYERDATA_ID" \
             -O minecraft/playerdata.zip
 
           echo ""
@@ -244,11 +266,127 @@ jobs:
 
             echo ""
             echo "Conteudo inicial:"
+
             head -c 500 playerdata.zip || true
+
+            echo ""
+            echo ""
 
             exit 1
 
           fi
+
+
+      # ==========================================
+      # INSTALAR PLAYERDATA
+      # ==========================================
+
+      - name: Instalar PlayerData
+        run: |
+          echo "========================================"
+          echo "INSTALANDO PLAYERDATA"
+          echo "========================================"
+
+          cd minecraft
+
+          echo ""
+          echo "1. CONTEUDO DO ZIP:"
+
+          unzip -l playerdata.zip
+
+          echo ""
+          echo "2. EXTRAINDO..."
+
+          rm -rf playerdata_temp
+
+          mkdir playerdata_temp
+
+          unzip -o playerdata.zip -d playerdata_temp
+
+          echo ""
+          echo "3. ESTRUTURA EXTRAIDA:"
+
+          find playerdata_temp -maxdepth 6 -print
+
+          echo ""
+          echo "4. ARQUIVOS .DAT:"
+
+          find playerdata_temp -type f -name "*.dat" -print
+
+          echo ""
+          echo "5. QUANTIDADE DE .DAT:"
+
+          find playerdata_temp -type f -name "*.dat" | wc -l
+
+          echo ""
+          echo "========================================"
+          echo "PROCURANDO PLAYERDATA"
+          echo "========================================"
+
+          PLAYERDATA_DIR=$(find playerdata_temp -type d -name "playerdata" | head -1)
+
+          if [ -n "$PLAYERDATA_DIR" ]; then
+
+            echo ""
+            echo "PlayerData encontrado em:"
+            echo "$PLAYERDATA_DIR"
+
+            mkdir -p world/playerdata
+
+            echo ""
+            echo "Copiando arquivos..."
+
+            cp -av "$PLAYERDATA_DIR"/* world/playerdata/ 2>/dev/null || true
+
+            echo ""
+            echo "========================================"
+            echo "PLAYERDATA INSTALADO"
+            echo "========================================"
+
+            echo ""
+            echo "Arquivos:"
+
+            ls -lah world/playerdata
+
+            echo ""
+            echo "Quantidade de arquivos .dat:"
+
+            find world/playerdata -type f -name "*.dat" | wc -l
+
+          else
+
+            echo ""
+            echo "========================================"
+            echo "ERRO: PLAYERDATA NAO ENCONTRADO"
+            echo "========================================"
+
+            echo ""
+            echo "Nenhuma pasta chamada playerdata foi encontrada."
+
+            echo ""
+            echo "Arquivos encontrados:"
+
+            find playerdata_temp -type f -print
+
+            echo ""
+            echo "Pastas encontradas:"
+
+            find playerdata_temp -type d -print
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "Removendo temporarios..."
+
+          rm -rf playerdata_temp
+          rm playerdata.zip
+
+          echo ""
+          echo "========================================"
+          echo "PLAYERDATA FINALIZADO"
+          echo "========================================"
 
 
       # ==========================================
@@ -258,7 +396,6 @@ jobs:
       - name: Iniciar Playit
         env:
           PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
-
         run: |
           echo "========================================"
           echo "INICIANDO PLAYIT"
@@ -280,7 +417,9 @@ jobs:
           sleep 10
 
           echo ""
-          echo "Logs do Playit:"
+          echo "========================================"
+          echo "LOG DO PLAYIT"
+          echo "========================================"
 
           docker logs playit
 
@@ -319,6 +458,11 @@ jobs:
           echo "========================================"
 
           echo ""
+          echo "Java:"
+
+          java -version
+
+          echo ""
           echo "Mundos:"
 
           du -sh world world_nether world_the_end
@@ -326,13 +470,13 @@ jobs:
           echo ""
           echo "PlayerData:"
 
-          if [ -d world/playerdata ]; then
+          if [ -d "world/playerdata" ]; then
             ls -lah world/playerdata
             echo ""
-            echo "Quantidade de jogadores:"
+            echo "Arquivos .dat:"
             find world/playerdata -type f -name "*.dat" | wc -l
           else
-            echo "Nenhum playerdata encontrado."
+            echo "Nenhuma pasta playerdata encontrada."
           fi
 
           echo ""
@@ -359,3 +503,8 @@ jobs:
           echo "========================================"
 
           docker logs playit || true
+
+          echo ""
+          echo "========================================"
+          echo "FIM DO WORKFLOW"
+          echo "========================================"
