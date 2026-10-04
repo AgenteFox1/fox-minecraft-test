@@ -48,8 +48,6 @@ jobs:
 
       - name: Baixar mapas do Google Drive
         run: |
-          mkdir -p minecraft/worlds
-
           echo "========================================"
           echo "BAIXANDO MAPAS"
           echo "========================================"
@@ -79,6 +77,20 @@ jobs:
 
           ls -lh minecraft/*.zip
 
+      - name: Baixar PlayerData do Google Drive
+        run: |
+          echo "========================================"
+          echo "BAIXANDO PLAYERDATA"
+          echo "========================================"
+
+          gdown \
+            "https://drive.google.com/uc?id=1-Vxic8YNeUNq-B5HFHmx1VylLRYyozW4" \
+            -O minecraft/playerdata.zip
+
+          echo ""
+          echo "PlayerData baixado:"
+          ls -lh minecraft/playerdata.zip
+
       - name: Instalar mapas
         run: |
           echo "========================================"
@@ -102,7 +114,7 @@ jobs:
           unzip -q world_the_end.zip
 
           echo ""
-          echo "Removendo ZIPs..."
+          echo "Removendo ZIPs dos mapas..."
           rm world.zip
           rm world_nether.zip
           rm world_the_end.zip
@@ -115,6 +127,50 @@ jobs:
           du -sh world
           du -sh world_nether
           du -sh world_the_end
+
+      - name: Instalar PlayerData
+        run: |
+          echo "========================================"
+          echo "INSTALANDO PLAYERDATA"
+          echo "========================================"
+
+          cd minecraft
+
+          echo ""
+          echo "Conteúdo do PlayerData:"
+          unzip -l playerdata.zip
+
+          echo ""
+          echo "Extraindo PlayerData..."
+
+          unzip -o playerdata.zip
+
+          echo ""
+          echo "Procurando arquivos de jogadores..."
+
+          find . -type f -name "*.dat" | head -50
+
+          echo ""
+          echo "Verificando minecraft/world/playerdata..."
+
+          if [ -d "world/playerdata" ]; then
+            echo ""
+            echo "PlayerData encontrado:"
+            ls -lah world/playerdata
+
+            echo ""
+            echo "Quantidade de jogadores:"
+            find world/playerdata -type f -name "*.dat" | wc -l
+          else
+            echo ""
+            echo "AVISO: minecraft/world/playerdata não foi encontrado."
+            echo "Estrutura extraída:"
+            find . -maxdepth 4 -type f | head -100
+          fi
+
+          echo ""
+          echo "Removendo ZIP..."
+          rm playerdata.zip
 
       - name: Iniciar Playit
         env:
@@ -164,6 +220,14 @@ jobs:
           echo ""
           echo "Mundos:"
           du -sh world world_nether world_the_end
+
+          echo ""
+          echo "PlayerData:"
+          if [ -d "world/playerdata" ]; then
+            find world/playerdata -type f -name "*.dat" | wc -l
+          else
+            echo "Diretório playerdata não encontrado."
+          fi
 
           echo ""
 
