@@ -41,6 +41,81 @@ jobs:
         run: |
           echo "eula=true" > minecraft/eula.txt
 
+      - name: Instalar gdown
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install gdown
+
+      - name: Baixar mapas do Google Drive
+        run: |
+          mkdir -p minecraft/worlds
+
+          echo "========================================"
+          echo "BAIXANDO MAPAS"
+          echo "========================================"
+
+          echo ""
+          echo "Baixando Overworld..."
+          gdown \
+            "https://drive.google.com/uc?id=1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-" \
+            -O minecraft/world.zip
+
+          echo ""
+          echo "Baixando Nether..."
+          gdown \
+            "https://drive.google.com/uc?id=1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM" \
+            -O minecraft/world_nether.zip
+
+          echo ""
+          echo "Baixando The End..."
+          gdown \
+            "https://drive.google.com/uc?id=1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt" \
+            -O minecraft/world_the_end.zip
+
+          echo ""
+          echo "========================================"
+          echo "MAPAS BAIXADOS"
+          echo "========================================"
+
+          ls -lh minecraft/*.zip
+
+      - name: Instalar mapas
+        run: |
+          echo "========================================"
+          echo "INSTALANDO MAPAS"
+          echo "========================================"
+
+          cd minecraft
+
+          rm -rf world world_nether world_the_end
+
+          echo ""
+          echo "Extraindo Overworld..."
+          unzip -q world.zip
+
+          echo ""
+          echo "Extraindo Nether..."
+          unzip -q world_nether.zip
+
+          echo ""
+          echo "Extraindo The End..."
+          unzip -q world_the_end.zip
+
+          echo ""
+          echo "Removendo ZIPs..."
+          rm world.zip
+          rm world_nether.zip
+          rm world_the_end.zip
+
+          echo ""
+          echo "========================================"
+          echo "MUNDOS INSTALADOS"
+          echo "========================================"
+
+          du -sh world
+          du -sh world_nether
+          du -sh world_the_end
+
       - name: Iniciar Playit
         env:
           PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
@@ -85,6 +160,12 @@ jobs:
           echo "========================================"
           echo "INICIANDO MINECRAFT"
           echo "========================================"
+
+          echo ""
+          echo "Mundos:"
+          du -sh world world_nether world_the_end
+
+          echo ""
 
           java \
             -Xms2G \
