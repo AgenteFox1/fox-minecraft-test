@@ -168,149 +168,87 @@ jobs:
           echo "BAIXANDO PLAYERDATA"
           echo "========================================"
 
-          PLAYERDATA_URL="https://drive.google.com/uc?id=1LXkLNo6voDQb_T7rafrKv6R6MBomPfRv"
+          mkdir -p minecraft
+
+          PLAYERDATA_ID="1LXkLNo6voDQb_T7rafrKv6R6MBomPfRv"
 
           echo ""
-          echo "ID do arquivo:"
-          echo "1LXkLNo6voDQb_T7rafrKv6R6MBomPfRv"
+          echo "ID:"
+          echo "$PLAYERDATA_ID"
 
           echo ""
-          echo "Iniciando download..."
+          echo "Baixando..."
 
           gdown \
-            "$PLAYERDATA_URL" \
+            --id "$PLAYERDATA_ID" \
+            --fuzzy \
             -O minecraft/playerdata.zip
 
           echo ""
           echo "========================================"
-          echo "VERIFICANDO PLAYERDATA"
+          echo "ARQUIVO RECEBIDO"
           echo "========================================"
-
-          if [ ! -f minecraft/playerdata.zip ]; then
-            echo ""
-            echo "ERRO: playerdata.zip não foi criado."
-            exit 1
-          fi
-
-          echo ""
-          echo "PlayerData baixado com sucesso:"
 
           ls -lh minecraft/playerdata.zip
 
           echo ""
-          echo "Tipo do arquivo:"
+          echo "TIPO DO ARQUIVO:"
 
           file minecraft/playerdata.zip
 
+          echo ""
+          echo "PRIMEIROS BYTES:"
+
+          xxd -l 64 minecraft/playerdata.zip || true
+
+          echo ""
+          echo "========================================"
+
 
       # ==========================================
-      # INSTALAR PLAYERDATA
+      # VALIDAR PLAYERDATA
       # ==========================================
 
-      - name: Instalar PlayerData
+      - name: Validar PlayerData
         run: |
           echo "========================================"
-          echo "DIAGNOSTICO DO PLAYERDATA"
+          echo "VALIDANDO PLAYERDATA"
           echo "========================================"
 
           cd minecraft
 
           echo ""
-          echo "1. ARQUIVO:"
+          echo "Testando ZIP..."
 
-          ls -lh playerdata.zip
-
-          echo ""
-          echo "2. CONTEUDO DO ZIP:"
-
-          unzip -l playerdata.zip
-
-          echo ""
-          echo "3. EXTRAINDO..."
-
-          rm -rf playerdata_temp
-
-          mkdir playerdata_temp
-
-          unzip -o playerdata.zip -d playerdata_temp
-
-          echo ""
-          echo "4. ESTRUTURA EXTRAIDA:"
-
-          find playerdata_temp -maxdepth 6 -print
-
-          echo ""
-          echo "5. ARQUIVOS .DAT:"
-
-          find playerdata_temp -type f -name "*.dat" -print
-
-          echo ""
-          echo "6. QUANTIDADE DE .DAT:"
-
-          find playerdata_temp -type f -name "*.dat" | wc -l
-
-          echo ""
-          echo "========================================"
-          echo "PROCURANDO PLAYERDATA"
-          echo "========================================"
-
-          PLAYERDATA_DIR=$(find playerdata_temp -type d -name "playerdata" | head -1)
-
-          if [ -n "$PLAYERDATA_DIR" ]; then
-
-            echo ""
-            echo "PlayerData encontrado em:"
-            echo "$PLAYERDATA_DIR"
-
-            mkdir -p world/playerdata
-
-            cp -av "$PLAYERDATA_DIR"/* world/playerdata/ 2>/dev/null || true
+          if unzip -t playerdata.zip; then
 
             echo ""
             echo "========================================"
-            echo "PLAYERDATA INSTALADO"
+            echo "ZIP VALIDO!"
             echo "========================================"
-
-            echo ""
-            echo "Arquivos:"
-
-            ls -lah world/playerdata
-
-            echo ""
-            echo "Quantidade:"
-
-            find world/playerdata -type f -name "*.dat" | wc -l
 
           else
 
             echo ""
             echo "========================================"
-            echo "ERRO: PLAYERDATA NÃO ENCONTRADO"
+            echo "ERRO: PLAYERDATA NAO E UM ZIP"
             echo "========================================"
 
             echo ""
-            echo "Nenhuma pasta chamada playerdata foi encontrada."
+            echo "Tamanho:"
+            ls -lh playerdata.zip
 
             echo ""
-            echo "Arquivos encontrados:"
-
-            find playerdata_temp -type f -print
+            echo "Tipo:"
+            file playerdata.zip
 
             echo ""
-            echo "Pastas encontradas:"
-
-            find playerdata_temp -type d -print
+            echo "Conteudo inicial:"
+            head -c 500 playerdata.zip || true
 
             exit 1
 
           fi
-
-          echo ""
-          echo "Removendo temporários..."
-
-          rm -rf playerdata_temp
-
-          rm playerdata.zip
 
 
       # ==========================================
