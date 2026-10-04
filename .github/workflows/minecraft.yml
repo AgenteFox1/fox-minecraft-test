@@ -9,9 +9,9 @@ jobs:
 
     steps:
 
-      # ==========================================
+      # ============================================================
       # JAVA
-      # ==========================================
+      # ============================================================
 
       - name: Configurar Java 21
         uses: actions/setup-java@v6
@@ -20,9 +20,9 @@ jobs:
           java-version: '21'
 
 
-      # ==========================================
+      # ============================================================
       # PAPER
-      # ==========================================
+      # ============================================================
 
       - name: Baixar Paper 1.21.11
         run: |
@@ -51,27 +51,26 @@ jobs:
 
           echo ""
           echo "Paper baixado:"
-
           ls -lh paper.jar
 
 
-      # ==========================================
+      # ============================================================
       # EULA
-      # ==========================================
+      # ============================================================
 
       - name: Aceitar EULA
         run: |
           echo "eula=true" > minecraft/eula.txt
 
 
-      # ==========================================
-      # GDOWN
-      # ==========================================
+      # ============================================================
+      # GDOWN + NBTLIB
+      # ============================================================
 
-      - name: Instalar gdown
+      - name: Instalar ferramentas
         run: |
           echo "========================================"
-          echo "INSTALANDO GDOWN"
+          echo "INSTALANDO FERRAMENTAS"
           echo "========================================"
 
           python3 -m pip install --upgrade pip
@@ -87,9 +86,9 @@ jobs:
           python3 -c "import nbtlib; print(nbtlib.__version__)"
 
 
-      # ==========================================
+      # ============================================================
       # MAPAS
-      # ==========================================
+      # ============================================================
 
       - name: Baixar mapas do Google Drive
         run: |
@@ -128,9 +127,9 @@ jobs:
           ls -lh minecraft/*.zip
 
 
-      # ==========================================
+      # ============================================================
       # INSTALAR MAPAS
-      # ==========================================
+      # ============================================================
 
       - name: Instalar mapas
         run: |
@@ -182,9 +181,30 @@ jobs:
           du -sh world_the_end
 
 
-      # ==========================================
-      # BAIXAR PLAYERDATA
-      # ==========================================
+      # ============================================================
+      # PLUGINS
+      # ============================================================
+
+      - name: Preparar plugins
+        run: |
+          echo "========================================"
+          echo "PREPARANDO PLUGINS"
+          echo "========================================"
+
+          mkdir -p minecraft/plugins
+
+          echo ""
+          echo "IMPORTANTE:"
+          echo "A pasta de plugins sera preenchida"
+          echo "com o backup dos plugins do Aternos."
+          echo ""
+
+          ls -lah minecraft/plugins
+
+
+      # ============================================================
+      # PLAYERDATA
+      # ============================================================
 
       - name: Baixar PlayerData do Google Drive
         run: |
@@ -220,9 +240,9 @@ jobs:
           file minecraft/playerdata.gz
 
 
-      # ==========================================
-      # LER E INSTALAR PLAYERDATA
-      # ==========================================
+      # ============================================================
+      # INSTALAR PLAYERDATA
+      # ============================================================
 
       - name: Instalar PlayerData
         run: |
@@ -294,26 +314,27 @@ jobs:
           print("")
           print("Procurando UUID...")
 
-          root = nbt.root
-
           found_uuid = None
 
-          # ------------------------------------------
-          # Tentativa 1: UUID diretamente
-          # ------------------------------------------
+          if "UUID" in nbt:
 
-          if "UUID" in root:
-              value = root["UUID"]
+              value = nbt["UUID"]
 
               print("")
               print("Tag UUID encontrada:")
               print(value)
 
               try:
+
                   values = [int(x) for x in value]
 
+                  print("")
+                  print("Valores UUID:")
+                  print(values)
+
                   if len(values) == 4:
-                      b = b"".join(
+
+                      raw = b"".join(
                           int(x & 0xffffffff).to_bytes(
                               4,
                               byteorder="big",
@@ -322,37 +343,44 @@ jobs:
                           for x in values
                       )
 
-                      found_uuid = str(uuid.UUID(bytes=b))
+                      found_uuid = str(
+                          uuid.UUID(bytes=raw)
+                      )
 
               except Exception as e:
-                  print("Nao foi possivel converter UUID:", e)
 
-          # ------------------------------------------
-          # Tentativa 2: UUIDMost / UUIDLeast
-          # ------------------------------------------
+                  print("")
+                  print("Erro ao converter UUID:")
+                  print(e)
 
           if found_uuid is None:
-              if "UUIDMost" in root and "UUIDLeast" in root:
+
+              if "UUIDMost" in nbt and "UUIDLeast" in nbt:
 
                   print("")
                   print("Encontrados UUIDMost e UUIDLeast.")
 
-                  most = int(root["UUIDMost"])
-                  least = int(root["UUIDLeast"])
+                  most = int(nbt["UUIDMost"])
+                  least = int(nbt["UUIDLeast"])
 
                   most &= (1 << 64) - 1
                   least &= (1 << 64) - 1
 
                   raw = (
-                      most.to_bytes(8, byteorder="big") +
-                      least.to_bytes(8, byteorder="big")
+                      most.to_bytes(
+                          8,
+                          byteorder="big"
+                      )
+                      +
+                      least.to_bytes(
+                          8,
+                          byteorder="big"
+                      )
                   )
 
-                  found_uuid = str(uuid.UUID(bytes=raw))
-
-          # ------------------------------------------
-          # Resultado
-          # ------------------------------------------
+                  found_uuid = str(
+                      uuid.UUID(bytes=raw)
+                  )
 
           if found_uuid is None:
 
@@ -360,12 +388,6 @@ jobs:
               print("========================================")
               print("UUID NAO ENCONTRADO")
               print("========================================")
-
-              print("")
-              print("Tags disponiveis:")
-
-              for key in root.keys():
-                  print(key)
 
               raise SystemExit(1)
 
@@ -378,11 +400,10 @@ jobs:
           print("UUID:")
           print(found_uuid)
 
-          # ------------------------------------------
-          # Criar pasta playerdata
-          # ------------------------------------------
-
-          os.makedirs(output_dir, exist_ok=True)
+          os.makedirs(
+              output_dir,
+              exist_ok=True
+          )
 
           destination = os.path.join(
               output_dir,
@@ -393,7 +414,10 @@ jobs:
           print("Destino:")
           print(destination)
 
-          shutil.copyfile(source, destination)
+          shutil.copyfile(
+              source,
+              destination
+          )
 
           print("")
           print("========================================")
@@ -406,7 +430,10 @@ jobs:
 
           print("")
           print("Tamanho:")
-          print(os.path.getsize(destination), "bytes")
+          print(
+              os.path.getsize(destination),
+              "bytes"
+          )
 
           PY
 
@@ -420,28 +447,25 @@ jobs:
           echo ""
           echo "Arquivos .dat:"
 
-          find world/playerdata -type f -name "*.dat" -print
+          find world/playerdata \
+            -type f \
+            -name "*.dat" \
+            -print
 
           echo ""
           echo "Quantidade:"
 
-          find world/playerdata -type f -name "*.dat" | wc -l
-
-          echo ""
-          echo "Removendo temporarios..."
+          find world/playerdata \
+            -type f \
+            -name "*.dat" | wc -l
 
           rm -f playerdata.dat
           rm -f playerdata.gz
 
-          echo ""
-          echo "========================================"
-          echo "PLAYERDATA FINALIZADO"
-          echo "========================================"
 
-
-      # ==========================================
+      # ============================================================
       # PLAYIT
-      # ==========================================
+      # ============================================================
 
       - name: Iniciar Playit
         env:
@@ -474,9 +498,9 @@ jobs:
           docker logs playit
 
 
-      # ==========================================
+      # ============================================================
       # VERIFICAR PLAYIT
-      # ==========================================
+      # ============================================================
 
       - name: Verificar Playit
         run: |
@@ -484,20 +508,57 @@ jobs:
           echo "STATUS DO PLAYIT"
           echo "========================================"
 
-          docker ps --filter "name=playit"
+          docker ps \
+            --filter "name=playit"
 
           echo ""
           echo "Logs recentes:"
 
-          docker logs --tail 50 playit
+          docker logs \
+            --tail 50 \
+            playit
 
-          echo ""
+
+      # ============================================================
+      # MOSTRAR ESTRUTURA
+      # ============================================================
+
+      - name: Verificar servidor antes de iniciar
+        run: |
+          echo "========================================"
+          echo "ESTRUTURA DO SERVIDOR"
           echo "========================================"
 
+          cd minecraft
 
-      # ==========================================
-      # INICIAR MINECRAFT
-      # ==========================================
+          echo ""
+          echo "Plugins:"
+
+          find plugins \
+            -maxdepth 2 \
+            -type f \
+            -print || true
+
+          echo ""
+          echo "PlayerData:"
+
+          find world/playerdata \
+            -type f \
+            -name "*.dat" \
+            -print || true
+
+          echo ""
+          echo "Mundos:"
+
+          du -sh \
+            world \
+            world_nether \
+            world_the_end
+
+
+      # ============================================================
+      # MINECRAFT
+      # ============================================================
 
       - name: Iniciar Minecraft
         run: |
@@ -513,22 +574,36 @@ jobs:
           java -version
 
           echo ""
+          echo "Plugins:"
+
+          ls -lah plugins || true
+
+          echo ""
           echo "Mundos:"
 
-          du -sh world world_nether world_the_end
+          du -sh \
+            world \
+            world_nether \
+            world_the_end
 
           echo ""
           echo "PlayerData:"
 
           if [ -d "world/playerdata" ]; then
+
             ls -lah world/playerdata
 
             echo ""
             echo "Arquivos .dat:"
 
-            find world/playerdata -type f -name "*.dat" | wc -l
+            find world/playerdata \
+              -type f \
+              -name "*.dat" | wc -l
+
           else
+
             echo "Nenhuma pasta playerdata encontrada."
+
           fi
 
           echo ""
@@ -543,9 +618,9 @@ jobs:
             nogui
 
 
-      # ==========================================
-      # LOG FINAL DO PLAYIT
-      # ==========================================
+      # ============================================================
+      # LOG FINAL
+      # ============================================================
 
       - name: Mostrar logs do Playit
         if: always()
