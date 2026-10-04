@@ -8,18 +8,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ==========================================
+      # JAVA
+      # ==========================================
+
       - name: Configurar Java 21
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
 
+
+      # ==========================================
+      # PAPER
+      # ==========================================
+
       - name: Baixar Paper 1.21.11
         run: |
           mkdir -p minecraft
           cd minecraft
 
-          echo "Consultando PaperMC..."
+          echo "========================================"
+          echo "BAIXANDO PAPER 1.21.11"
+          echo "========================================"
 
           RESPONSE=$(curl -fsSL \
             -H "User-Agent: fox-minecraft-test/1.0" \
@@ -28,23 +40,42 @@ jobs:
           DOWNLOAD_URL=$(echo "$RESPONSE" | \
             jq -r 'map(select(.channel == "STABLE")) | .[0].downloads["server:default"].url')
 
-          echo "Download: $DOWNLOAD_URL"
+          echo ""
+          echo "Download:"
+          echo "$DOWNLOAD_URL"
 
           curl -fL \
             -H "User-Agent: fox-minecraft-test/1.0" \
             -o paper.jar \
             "$DOWNLOAD_URL"
 
+          echo ""
+          echo "Paper baixado:"
           ls -lh paper.jar
+
+
+      # ==========================================
+      # EULA
+      # ==========================================
 
       - name: Aceitar EULA
         run: |
           echo "eula=true" > minecraft/eula.txt
 
+
+      # ==========================================
+      # GDOWN
+      # ==========================================
+
       - name: Instalar gdown
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install gdown
+
+
+      # ==========================================
+      # MAPAS
+      # ==========================================
 
       - name: Baixar mapas do Google Drive
         run: |
@@ -74,45 +105,16 @@ jobs:
             -O minecraft/world_the_end.zip
 
           echo ""
-          echo "Mapas baixados:"
+          echo "========================================"
+          echo "MAPAS BAIXADOS"
+          echo "========================================"
 
           ls -lh minecraft/*.zip
 
-      - name: Baixar PlayerData do Google Drive
-        run: |
-          echo "========================================"
-          echo "BAIXANDO PLAYERDATA"
-          echo "========================================"
 
-          PLAYERDATA_URL="https://drive.google.com/uc?id=1-Vxic8YNeUNq-B5HFHmx1VylLRYyozW4"
-
-          echo ""
-          echo "ID do arquivo:"
-          echo "1-Vxic8YNeUNq-B5HFHmx1VylLRYyozW4"
-
-          echo ""
-          echo "Iniciando download..."
-
-          gdown \
-            "$PLAYERDATA_URL" \
-            -O minecraft/playerdata.zip
-
-          echo ""
-          echo "Verificando arquivo..."
-
-          if [ ! -f minecraft/playerdata.zip ]; then
-            echo ""
-            echo "ERRO: playerdata.zip não foi criado."
-            exit 1
-          fi
-
-          echo ""
-          echo "PlayerData baixado com sucesso:"
-          ls -lh minecraft/playerdata.zip
-
-          echo ""
-          echo "Tipo do arquivo:"
-          file minecraft/playerdata.zip
+      # ==========================================
+      # INSTALAR MAPAS
+      # ==========================================
 
       - name: Instalar mapas
         run: |
@@ -126,18 +128,21 @@ jobs:
 
           echo ""
           echo "Extraindo Overworld..."
+
           unzip -q world.zip
 
           echo ""
           echo "Extraindo Nether..."
+
           unzip -q world_nether.zip
 
           echo ""
           echo "Extraindo The End..."
+
           unzip -q world_the_end.zip
 
           echo ""
-          echo "Removendo ZIPs dos mapas..."
+          echo "Removendo ZIPs..."
 
           rm world.zip
           rm world_nether.zip
@@ -152,6 +157,56 @@ jobs:
           du -sh world_nether
           du -sh world_the_end
 
+
+      # ==========================================
+      # PLAYERDATA
+      # ==========================================
+
+      - name: Baixar PlayerData do Google Drive
+        run: |
+          echo "========================================"
+          echo "BAIXANDO PLAYERDATA"
+          echo "========================================"
+
+          PLAYERDATA_URL="https://drive.google.com/uc?id=1LXkLNo6voDQb_T7rafrKv6R6MBomPfRv"
+
+          echo ""
+          echo "ID do arquivo:"
+          echo "1LXkLNo6voDQb_T7rafrKv6R6MBomPfRv"
+
+          echo ""
+          echo "Iniciando download..."
+
+          gdown \
+            "$PLAYERDATA_URL" \
+            -O minecraft/playerdata.zip
+
+          echo ""
+          echo "========================================"
+          echo "VERIFICANDO PLAYERDATA"
+          echo "========================================"
+
+          if [ ! -f minecraft/playerdata.zip ]; then
+            echo ""
+            echo "ERRO: playerdata.zip não foi criado."
+            exit 1
+          fi
+
+          echo ""
+          echo "PlayerData baixado com sucesso:"
+
+          ls -lh minecraft/playerdata.zip
+
+          echo ""
+          echo "Tipo do arquivo:"
+
+          file minecraft/playerdata.zip
+
+
+      # ==========================================
+      # INSTALAR PLAYERDATA
+      # ==========================================
+
       - name: Instalar PlayerData
         run: |
           echo "========================================"
@@ -162,30 +217,36 @@ jobs:
 
           echo ""
           echo "1. ARQUIVO:"
+
           ls -lh playerdata.zip
 
           echo ""
           echo "2. CONTEUDO DO ZIP:"
+
           unzip -l playerdata.zip
 
           echo ""
           echo "3. EXTRAINDO..."
 
           rm -rf playerdata_temp
+
           mkdir playerdata_temp
 
           unzip -o playerdata.zip -d playerdata_temp
 
           echo ""
           echo "4. ESTRUTURA EXTRAIDA:"
+
           find playerdata_temp -maxdepth 6 -print
 
           echo ""
           echo "5. ARQUIVOS .DAT:"
+
           find playerdata_temp -type f -name "*.dat" -print
 
           echo ""
           echo "6. QUANTIDADE DE .DAT:"
+
           find playerdata_temp -type f -name "*.dat" | wc -l
 
           echo ""
@@ -212,10 +273,12 @@ jobs:
 
             echo ""
             echo "Arquivos:"
+
             ls -lah world/playerdata
 
             echo ""
             echo "Quantidade:"
+
             find world/playerdata -type f -name "*.dat" | wc -l
 
           else
@@ -230,10 +293,12 @@ jobs:
 
             echo ""
             echo "Arquivos encontrados:"
+
             find playerdata_temp -type f -print
 
             echo ""
             echo "Pastas encontradas:"
+
             find playerdata_temp -type d -print
 
             exit 1
@@ -244,11 +309,18 @@ jobs:
           echo "Removendo temporários..."
 
           rm -rf playerdata_temp
+
           rm playerdata.zip
+
+
+      # ==========================================
+      # PLAYIT
+      # ==========================================
 
       - name: Iniciar Playit
         env:
           PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+
         run: |
           echo "========================================"
           echo "INICIANDO PLAYIT"
@@ -269,7 +341,15 @@ jobs:
 
           sleep 10
 
+          echo ""
+          echo "Logs do Playit:"
+
           docker logs playit
+
+
+      # ==========================================
+      # VERIFICAR PLAYIT
+      # ==========================================
 
       - name: Verificar Playit
         run: |
@@ -287,6 +367,11 @@ jobs:
           echo ""
           echo "========================================"
 
+
+      # ==========================================
+      # INICIAR MINECRAFT
+      # ==========================================
+
       - name: Iniciar Minecraft
         run: |
           cd minecraft
@@ -297,24 +382,36 @@ jobs:
 
           echo ""
           echo "Mundos:"
+
           du -sh world world_nether world_the_end
 
           echo ""
           echo "PlayerData:"
 
-          if [ -d "world/playerdata" ]; then
+          if [ -d world/playerdata ]; then
+            ls -lah world/playerdata
+            echo ""
+            echo "Quantidade de jogadores:"
             find world/playerdata -type f -name "*.dat" | wc -l
           else
-            echo "Diretório playerdata não encontrado."
+            echo "Nenhum playerdata encontrado."
           fi
 
           echo ""
+          echo "========================================"
+          echo "SERVIDOR INICIANDO"
+          echo "========================================"
 
           java \
             -Xms2G \
             -Xmx8G \
             -jar paper.jar \
             nogui
+
+
+      # ==========================================
+      # LOG FINAL DO PLAYIT
+      # ==========================================
 
       - name: Mostrar logs do Playit
         if: always()
