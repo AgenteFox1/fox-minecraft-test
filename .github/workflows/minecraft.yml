@@ -41,26 +41,38 @@ jobs:
         run: |
           echo "eula=true" > minecraft/eula.txt
 
-      - name: Baixar Playit
-        run: |
-          mkdir playit
-          cd playit
-
-          curl -fL \
-            -o playit \
-            https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
-
-          chmod +x playit
-
       - name: Iniciar Playit
+        env:
+          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
         run: |
-          mkdir -p "$HOME/.config/playit_gg"
+          echo "Iniciando Playit..."
 
-          cd playit
+          docker run \
+            -d \
+            --name playit \
+            --network host \
+            -e SECRET_KEY="$PLAYIT_SECRET" \
+            ghcr.io/playit-cloud/playit-agent:latest
 
-          ./playit
+          echo "Playit iniciado."
+
+          sleep 5
+
+          docker logs playit
 
       - name: Iniciar Minecraft
         run: |
           cd minecraft
-          java -Xms2G -Xmx8G -jar paper.jar nogui
+
+          echo "Iniciando Minecraft..."
+
+          java \
+            -Xms2G \
+            -Xmx8G \
+            -jar paper.jar \
+            nogui
+
+      - name: Logs do Playit
+        if: always()
+        run: |
+          docker logs playit || true
