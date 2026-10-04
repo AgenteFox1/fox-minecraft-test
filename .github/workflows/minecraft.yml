@@ -64,7 +64,7 @@ jobs:
 
 
       # ============================================================
-      # GDOWN + NBTLIB
+      # FERRAMENTAS
       # ============================================================
 
       - name: Instalar ferramentas
@@ -185,21 +185,129 @@ jobs:
       # PLUGINS
       # ============================================================
 
-      - name: Preparar plugins
+      - name: Baixar plugins do Google Drive
         run: |
           echo "========================================"
-          echo "PREPARANDO PLUGINS"
+          echo "BAIXANDO PLUGINS"
           echo "========================================"
 
           mkdir -p minecraft/plugins
 
-          echo ""
-          echo "IMPORTANTE:"
-          echo "A pasta de plugins sera preenchida"
-          echo "com o backup dos plugins do Aternos."
-          echo ""
+          PLUGINS_ID="1y3vtgiHBcqsgrWBIULTnwcPEextG-IXC"
 
-          ls -lah minecraft/plugins
+          echo ""
+          echo "ID dos plugins:"
+          echo "$PLUGINS_ID"
+
+          echo ""
+          echo "Baixando..."
+
+          gdown \
+            "https://drive.google.com/uc?id=$PLUGINS_ID" \
+            -O minecraft/plugins.zip
+
+          echo ""
+          echo "========================================"
+          echo "PLUGINS BAIXADOS"
+          echo "========================================"
+
+          ls -lh minecraft/plugins.zip
+
+          echo ""
+          echo "Tipo do arquivo:"
+
+          file minecraft/plugins.zip
+
+
+      # ============================================================
+      # INSTALAR PLUGINS
+      # ============================================================
+
+      - name: Instalar plugins
+        run: |
+          echo "========================================"
+          echo "INSTALANDO PLUGINS"
+          echo "========================================"
+
+          cd minecraft
+
+          rm -rf plugins
+
+          mkdir -p plugins
+
+          echo ""
+          echo "Extraindo plugins..."
+
+          unzip -q plugins.zip -d plugins_temp
+
+          echo ""
+          echo "Estrutura encontrada:"
+
+          find plugins_temp \
+            -maxdepth 3 \
+            -type f \
+            -print | sort
+
+          echo ""
+          echo "========================================"
+          echo "ORGANIZANDO PLUGINS"
+          echo "========================================"
+
+          # Caso o ZIP tenha uma pasta plugins dentro dele,
+          # utiliza essa pasta como raiz.
+
+          if [ -d "plugins_temp/plugins" ]; then
+
+            echo ""
+            echo "Encontrada pasta plugins dentro do ZIP."
+
+            cp -a plugins_temp/plugins/. plugins/
+
+          else
+
+            echo ""
+            echo "Plugins encontrados diretamente no ZIP."
+
+            cp -a plugins_temp/. plugins/
+
+          fi
+
+          echo ""
+          echo "Removendo temporarios..."
+
+          rm -rf plugins_temp
+          rm -f plugins.zip
+
+          echo ""
+          echo "========================================"
+          echo "PLUGINS INSTALADOS"
+          echo "========================================"
+
+          echo ""
+          echo "JARs encontrados:"
+
+          find plugins \
+            -maxdepth 1 \
+            -type f \
+            -name "*.jar" \
+            -printf "%f\n" | sort
+
+          echo ""
+          echo "Quantidade de JARs:"
+
+          find plugins \
+            -maxdepth 1 \
+            -type f \
+            -name "*.jar" | wc -l
+
+          echo ""
+          echo "Pastas de configuracao:"
+
+          find plugins \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d \
+            -printf "%f\n" | sort
 
 
       # ============================================================
@@ -520,44 +628,55 @@ jobs:
 
 
       # ============================================================
-      # MOSTRAR ESTRUTURA
+      # VERIFICAR PLUGINS ANTES DO PAPER
       # ============================================================
 
-      - name: Verificar servidor antes de iniciar
+      - name: Verificar plugins
         run: |
-          echo "========================================"
-          echo "ESTRUTURA DO SERVIDOR"
-          echo "========================================"
-
           cd minecraft
 
+          echo "========================================"
+          echo "VERIFICACAO DOS PLUGINS"
+          echo "========================================"
+
           echo ""
-          echo "Plugins:"
+          echo "JARs instalados:"
+          echo ""
 
           find plugins \
-            -maxdepth 2 \
+            -maxdepth 1 \
             -type f \
-            -print || true
+            -name "*.jar" \
+            -printf "%f\n" | sort
 
           echo ""
-          echo "PlayerData:"
+          echo "========================================"
+          echo "QUANTIDADE"
+          echo "========================================"
 
-          find world/playerdata \
+          PLUGIN_COUNT=$(find plugins \
+            -maxdepth 1 \
             -type f \
-            -name "*.dat" \
-            -print || true
+            -name "*.jar" | wc -l)
 
           echo ""
-          echo "Mundos:"
+          echo "Total de JARs:"
+          echo "$PLUGIN_COUNT"
 
-          du -sh \
-            world \
-            world_nether \
-            world_the_end
+          echo ""
+          echo "========================================"
+          echo "CONFIGURACOES"
+          echo "========================================"
+
+          find plugins \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d \
+            -printf "%f\n" | sort
 
 
       # ============================================================
-      # MINECRAFT
+      # INICIAR MINECRAFT
       # ============================================================
 
       - name: Iniciar Minecraft
@@ -574,12 +693,25 @@ jobs:
           java -version
 
           echo ""
-          echo "Plugins:"
+          echo "Paper:"
 
-          ls -lah plugins || true
+          ls -lh paper.jar
 
           echo ""
-          echo "Mundos:"
+          echo "========================================"
+          echo "PLUGINS"
+          echo "========================================"
+
+          find plugins \
+            -maxdepth 1 \
+            -type f \
+            -name "*.jar" \
+            -printf "%f\n" | sort
+
+          echo ""
+          echo "========================================"
+          echo "MUNDOS"
+          echo "========================================"
 
           du -sh \
             world \
@@ -587,7 +719,9 @@ jobs:
             world_the_end
 
           echo ""
-          echo "PlayerData:"
+          echo "========================================"
+          echo "PLAYERDATA"
+          echo "========================================"
 
           if [ -d "world/playerdata" ]; then
 
@@ -598,7 +732,8 @@ jobs:
 
             find world/playerdata \
               -type f \
-              -name "*.dat" | wc -l
+              -name "*.dat" \
+              -print
 
           else
 
@@ -619,7 +754,7 @@ jobs:
 
 
       # ============================================================
-      # LOG FINAL
+      # LOG FINAL DO PLAYIT
       # ============================================================
 
       - name: Mostrar logs do Playit
