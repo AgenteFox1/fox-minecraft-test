@@ -16,7 +16,7 @@ jobs:
 
       - name: Baixar Paper 1.21.11
         run: |
-          mkdir minecraft
+          mkdir -p minecraft
           cd minecraft
 
           echo "Consultando PaperMC..."
@@ -47,24 +47,44 @@ jobs:
         run: |
           echo "Iniciando Playit..."
 
+          docker rm -f playit 2>/dev/null || true
+
           docker run \
             -d \
             --name playit \
             --network host \
+            --restart unless-stopped \
             -e SECRET_KEY="$PLAYIT_SECRET" \
             ghcr.io/playit-cloud/playit-agent:latest
 
-          echo "Playit iniciado."
+          echo "Aguardando Playit..."
 
-          sleep 5
+          sleep 10
 
           docker logs playit
+
+      - name: Verificar Playit
+        run: |
+          echo "========================================"
+          echo "STATUS DO PLAYIT"
+          echo "========================================"
+
+          docker ps --filter "name=playit"
+
+          echo ""
+          echo "Logs recentes:"
+          docker logs --tail 50 playit
+
+          echo ""
+          echo "========================================"
 
       - name: Iniciar Minecraft
         run: |
           cd minecraft
 
-          echo "Iniciando Minecraft..."
+          echo "========================================"
+          echo "INICIANDO MINECRAFT"
+          echo "========================================"
 
           java \
             -Xms2G \
@@ -72,7 +92,11 @@ jobs:
             -jar paper.jar \
             nogui
 
-      - name: Logs do Playit
+      - name: Mostrar logs do Playit
         if: always()
         run: |
+          echo "========================================"
+          echo "LOG FINAL DO PLAYIT"
+          echo "========================================"
+
           docker logs playit || true
