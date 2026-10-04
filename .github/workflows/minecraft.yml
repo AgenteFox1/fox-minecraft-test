@@ -33,9 +33,6 @@ jobs:
           echo "BAIXANDO PAPER 1.21.11"
           echo "========================================"
 
-          echo ""
-          echo "Consultando PaperMC..."
-
           RESPONSE=$(curl -fsSL \
             -H "User-Agent: fox-minecraft-test/1.0" \
             "https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds")
@@ -204,22 +201,19 @@ jobs:
 
           gdown \
             "$PLAYERDATA_ID" \
-            -O minecraft/playerdata.zip
+            -O minecraft/playerdata.gz
 
           echo ""
           echo "========================================"
           echo "ARQUIVO RECEBIDO"
           echo "========================================"
 
-          ls -lh minecraft/playerdata.zip
+          ls -lh minecraft/playerdata.gz
 
           echo ""
-          echo "TIPO DO ARQUIVO:"
+          echo "Tipo:"
 
-          file minecraft/playerdata.zip
-
-          echo ""
-          echo "========================================"
+          file minecraft/playerdata.gz
 
 
       # ==========================================
@@ -235,116 +229,149 @@ jobs:
           cd minecraft
 
           echo ""
-          echo "Tipo do arquivo:"
+          echo "Arquivo recebido:"
 
-          file playerdata.zip
+          file playerdata.gz
+
+          ls -lh playerdata.gz
 
           echo ""
           echo "========================================"
-          echo "TESTANDO GZIP"
+          echo "VALIDANDO GZIP"
           echo "========================================"
 
-          if gzip -t playerdata.zip; then
-
+          if ! gzip -t playerdata.gz; then
             echo ""
-            echo "GZIP VALIDO!"
-
-          else
-
-            echo ""
-            echo "ERRO: ARQUIVO GZIP INVALIDO"
-
+            echo "ERRO: O PLAYERDATA NAO E UM GZIP VALIDO."
             exit 1
-
           fi
 
           echo ""
-          echo "========================================"
-          echo "LISTANDO CONTEUDO"
-          echo "========================================"
-
-          tar -tzf playerdata.zip | head -100
+          echo "GZIP VALIDO!"
 
           echo ""
           echo "========================================"
-          echo "EXTRAINDO PLAYERDATA"
+          echo "DESCOMPACTANDO PLAYERDATA"
           echo "========================================"
 
           rm -rf playerdata_temp
 
           mkdir playerdata_temp
 
-          tar -xzf playerdata.zip -C playerdata_temp
+          gzip -dc playerdata.gz > playerdata_temp/playerdata.dat
 
           echo ""
-          echo "Estrutura extraida:"
+          echo "Arquivo descompactado:"
 
-          find playerdata_temp -maxdepth 6 -print
+          ls -lh playerdata_temp/playerdata.dat
+
+          echo ""
+          echo "Tipo:"
+
+          file playerdata_temp/playerdata.dat
 
           echo ""
           echo "========================================"
-          echo "PROCURANDO PLAYERDATA"
+          echo "PROCURANDO UUID NO NOME ORIGINAL"
           echo "========================================"
 
-          PLAYERDATA_DIR=$(find playerdata_temp -type d -name "playerdata" | head -1)
+          echo ""
+          echo "Informacoes do GZIP:"
 
-          if [ -n "$PLAYERDATA_DIR" ]; then
+          gzip -lv playerdata.gz || true
 
-            echo ""
-            echo "PlayerData encontrado em:"
-            echo "$PLAYERDATA_DIR"
+          echo ""
+          echo "========================================"
+          echo "ARQUIVOS DAT ENCONTRADOS"
+          echo "========================================"
 
-            mkdir -p world/playerdata
+          find playerdata_temp -type f -name "*.dat" -print
 
-            echo ""
-            echo "Copiando arquivos..."
+          echo ""
+          echo "========================================"
+          echo "INSTALANDO PLAYERDATA"
+          echo "========================================"
 
-            cp -av "$PLAYERDATA_DIR"/* world/playerdata/ 2>/dev/null || true
+          mkdir -p world/playerdata
 
-            echo ""
-            echo "========================================"
-            echo "PLAYERDATA INSTALADO"
-            echo "========================================"
+          DAT_FILE=$(find playerdata_temp -type f -name "*.dat" | head -1)
 
-            echo ""
-            echo "Arquivos:"
-
-            ls -lah world/playerdata
+          if [ -z "$DAT_FILE" ]; then
 
             echo ""
-            echo "Quantidade de .dat:"
-
-            find world/playerdata -type f -name "*.dat" | wc -l
-
-          else
-
-            echo ""
-            echo "========================================"
-            echo "PLAYERDATA NAO ENCONTRADO"
-            echo "========================================"
-
-            echo ""
-            echo "Procurando arquivos .dat:"
-
-            find playerdata_temp -type f -name "*.dat" -print
-
-            echo ""
-            echo "Estrutura completa:"
-
-            find playerdata_temp -maxdepth 8 -print
-
-            echo ""
-            echo "========================================"
+            echo "ERRO: NENHUM ARQUIVO .DAT FOI ENCONTRADO."
 
             exit 1
 
           fi
 
           echo ""
-          echo "Removendo temporarios..."
+          echo "Arquivo encontrado:"
+          echo "$DAT_FILE"
+
+          echo ""
+          echo "Nome:"
+          basename "$DAT_FILE"
+
+          echo ""
+          echo "========================================"
+          echo "VERIFICANDO NOME DO PLAYERDATA"
+          echo "========================================"
+
+          DAT_NAME=$(basename "$DAT_FILE")
+
+          echo ""
+          echo "Nome do arquivo:"
+          echo "$DAT_NAME"
+
+          # Se o arquivo ja tiver um nome UUID.dat,
+          # usamos esse nome diretamente.
+          if [[ "$DAT_NAME" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.dat$ ]]; then
+
+            echo ""
+            echo "UUID encontrado no nome do arquivo!"
+
+            cp -av "$DAT_FILE" "world/playerdata/$DAT_NAME"
+
+          else
+
+            echo ""
+            echo "O arquivo nao possui nome UUID."
+            echo ""
+            echo "PlayerData descompactado:"
+            ls -lah "$DAT_FILE"
+            echo ""
+            echo "O arquivo precisa ser associado ao UUID do jogador."
+            echo ""
+            echo "NAO VAMOS COLOCAR UM NOME ERRADO AUTOMATICAMENTE."
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "========================================"
+          echo "PLAYERDATA INSTALADO"
+          echo "========================================"
+
+          echo ""
+          echo "Arquivos em world/playerdata:"
+
+          ls -lah world/playerdata
+
+          echo ""
+          echo "Quantidade de .dat:"
+
+          find world/playerdata -type f -name "*.dat" | wc -l
+
+          echo ""
+          echo "========================================"
 
           rm -rf playerdata_temp
-          rm playerdata.zip
+          rm -f playerdata.gz
+
+          echo ""
+          echo "Temporarios removidos."
 
           echo ""
           echo "========================================"
