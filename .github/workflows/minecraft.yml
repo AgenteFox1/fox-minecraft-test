@@ -54,120 +54,65 @@ jobs:
 
           echo ""
           echo "Baixando Overworld..."
+
           gdown \
             "https://drive.google.com/uc?id=1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-" \
             -O minecraft/world.zip
 
           echo ""
           echo "Baixando Nether..."
+
           gdown \
             "https://drive.google.com/uc?id=1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM" \
             -O minecraft/world_nether.zip
 
           echo ""
           echo "Baixando The End..."
+
           gdown \
             "https://drive.google.com/uc?id=1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt" \
             -O minecraft/world_the_end.zip
 
           echo ""
-          echo "========================================"
-          echo "MAPAS BAIXADOS"
-          echo "========================================"
+          echo "Mapas baixados:"
 
           ls -lh minecraft/*.zip
 
-      - name: Instalar PlayerData
+      - name: Baixar PlayerData do Google Drive
         run: |
           echo "========================================"
-          echo "DIAGNOSTICO DO PLAYERDATA"
+          echo "BAIXANDO PLAYERDATA"
           echo "========================================"
 
-          cd minecraft
+          PLAYERDATA_URL="https://drive.google.com/uc?id=1-Vxic8YNeUNq-B5HFHmx1VylLRYyozW4"
 
           echo ""
-          echo "1. ARQUIVO BAIXADO:"
-          ls -lh playerdata.zip
+          echo "ID do arquivo:"
+          echo "1-Vxic8YNeUNq-B5HFHmx1VylLRYyozW4"
 
           echo ""
-          echo "2. CONTEUDO COMPLETO DO ZIP:"
-          unzip -l playerdata.zip
+          echo "Iniciando download..."
+
+          gdown \
+            "$PLAYERDATA_URL" \
+            -O minecraft/playerdata.zip
 
           echo ""
-          echo "3. EXTRAINDO PARA UMA PASTA TEMPORARIA:"
-          rm -rf playerdata_temp
-          mkdir playerdata_temp
+          echo "Verificando arquivo..."
 
-          unzip -o playerdata.zip -d playerdata_temp
-
-          echo ""
-          echo "4. ESTRUTURA EXTRAIDA:"
-          find playerdata_temp -maxdepth 5 -print
-
-          echo ""
-          echo "5. ARQUIVOS .DAT:"
-          find playerdata_temp -type f -name "*.dat" -print
-
-          echo ""
-          echo "6. QUANTIDADE DE .DAT:"
-          find playerdata_temp -type f -name "*.dat" | wc -l
-
-          echo ""
-          echo "========================================"
-          echo "PROCURANDO PLAYERDATA"
-          echo "========================================"
-
-          PLAYERDATA_DIR=$(find playerdata_temp -type d -name "playerdata" | head -1)
-
-          if [ -n "$PLAYERDATA_DIR" ]; then
-
-            echo "PlayerData encontrado em:"
-            echo "$PLAYERDATA_DIR"
-
-            mkdir -p world/playerdata
-
-            cp -av "$PLAYERDATA_DIR"/* world/playerdata/ 2>/dev/null || true
-
+          if [ ! -f minecraft/playerdata.zip ]; then
             echo ""
-            echo "PlayerData instalado em:"
-            echo "world/playerdata/"
-
-            echo ""
-            echo "Arquivos instalados:"
-            ls -lah world/playerdata
-
-            echo ""
-            echo "Quantidade:"
-            find world/playerdata -type f -name "*.dat" | wc -l
-
-          else
-
-            echo "========================================"
-            echo "ERRO: PLAYERDATA NAO ENCONTRADO"
-            echo "========================================"
-
-            echo ""
-            echo "Nenhuma pasta chamada playerdata foi encontrada."
-
-            echo ""
-            echo "Arquivos encontrados:"
-            find playerdata_temp -type f -print
-
-            echo ""
-            echo "Pastas encontradas:"
-            find playerdata_temp -type d -print
-
+            echo "ERRO: playerdata.zip não foi criado."
+            exit 1
           fi
 
           echo ""
-          echo "Removendo arquivos temporarios..."
-          rm -rf playerdata_temp
-          rm -f playerdata.zip
+          echo "PlayerData baixado com sucesso:"
+          ls -lh minecraft/playerdata.zip
 
           echo ""
-          echo "========================================"
-          echo "FIM DO DIAGNOSTICO"
-          echo "========================================"
+          echo "Tipo do arquivo:"
+          file minecraft/playerdata.zip
 
       - name: Instalar mapas
         run: |
@@ -193,6 +138,7 @@ jobs:
 
           echo ""
           echo "Removendo ZIPs dos mapas..."
+
           rm world.zip
           rm world_nether.zip
           rm world_the_end.zip
@@ -209,52 +155,104 @@ jobs:
       - name: Instalar PlayerData
         run: |
           echo "========================================"
-          echo "INSTALANDO PLAYERDATA"
+          echo "DIAGNOSTICO DO PLAYERDATA"
           echo "========================================"
 
           cd minecraft
 
           echo ""
-          echo "Conteúdo do PlayerData:"
+          echo "1. ARQUIVO:"
+          ls -lh playerdata.zip
+
+          echo ""
+          echo "2. CONTEUDO DO ZIP:"
           unzip -l playerdata.zip
 
           echo ""
-          echo "Extraindo PlayerData..."
+          echo "3. EXTRAINDO..."
 
-          unzip -o playerdata.zip
+          rm -rf playerdata_temp
+          mkdir playerdata_temp
 
-          echo ""
-          echo "Procurando arquivos de jogadores..."
-
-          find . -type f -name "*.dat" | head -50
+          unzip -o playerdata.zip -d playerdata_temp
 
           echo ""
-          echo "Verificando minecraft/world/playerdata..."
+          echo "4. ESTRUTURA EXTRAIDA:"
+          find playerdata_temp -maxdepth 6 -print
 
-          if [ -d "world/playerdata" ]; then
+          echo ""
+          echo "5. ARQUIVOS .DAT:"
+          find playerdata_temp -type f -name "*.dat" -print
+
+          echo ""
+          echo "6. QUANTIDADE DE .DAT:"
+          find playerdata_temp -type f -name "*.dat" | wc -l
+
+          echo ""
+          echo "========================================"
+          echo "PROCURANDO PLAYERDATA"
+          echo "========================================"
+
+          PLAYERDATA_DIR=$(find playerdata_temp -type d -name "playerdata" | head -1)
+
+          if [ -n "$PLAYERDATA_DIR" ]; then
+
             echo ""
-            echo "PlayerData encontrado:"
+            echo "PlayerData encontrado em:"
+            echo "$PLAYERDATA_DIR"
+
+            mkdir -p world/playerdata
+
+            cp -av "$PLAYERDATA_DIR"/* world/playerdata/ 2>/dev/null || true
+
+            echo ""
+            echo "========================================"
+            echo "PLAYERDATA INSTALADO"
+            echo "========================================"
+
+            echo ""
+            echo "Arquivos:"
             ls -lah world/playerdata
 
             echo ""
-            echo "Quantidade de jogadores:"
+            echo "Quantidade:"
             find world/playerdata -type f -name "*.dat" | wc -l
+
           else
+
             echo ""
-            echo "AVISO: minecraft/world/playerdata não foi encontrado."
-            echo "Estrutura extraída:"
-            find . -maxdepth 4 -type f | head -100
+            echo "========================================"
+            echo "ERRO: PLAYERDATA NÃO ENCONTRADO"
+            echo "========================================"
+
+            echo ""
+            echo "Nenhuma pasta chamada playerdata foi encontrada."
+
+            echo ""
+            echo "Arquivos encontrados:"
+            find playerdata_temp -type f -print
+
+            echo ""
+            echo "Pastas encontradas:"
+            find playerdata_temp -type d -print
+
+            exit 1
+
           fi
 
           echo ""
-          echo "Removendo ZIP..."
+          echo "Removendo temporários..."
+
+          rm -rf playerdata_temp
           rm playerdata.zip
 
       - name: Iniciar Playit
         env:
           PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
         run: |
-          echo "Iniciando Playit..."
+          echo "========================================"
+          echo "INICIANDO PLAYIT"
+          echo "========================================"
 
           docker rm -f playit 2>/dev/null || true
 
@@ -266,6 +264,7 @@ jobs:
             -e SECRET_KEY="$PLAYIT_SECRET" \
             ghcr.io/playit-cloud/playit-agent:latest
 
+          echo ""
           echo "Aguardando Playit..."
 
           sleep 10
@@ -282,6 +281,7 @@ jobs:
 
           echo ""
           echo "Logs recentes:"
+
           docker logs --tail 50 playit
 
           echo ""
@@ -301,6 +301,7 @@ jobs:
 
           echo ""
           echo "PlayerData:"
+
           if [ -d "world/playerdata" ]; then
             find world/playerdata -type f -name "*.dat" | wc -l
           else
