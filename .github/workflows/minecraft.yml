@@ -219,62 +219,7 @@ jobs:
           file minecraft/playerdata.zip
 
           echo ""
-          echo "PRIMEIROS BYTES:"
-
-          xxd -l 64 minecraft/playerdata.zip || true
-
-          echo ""
           echo "========================================"
-
-
-      # ==========================================
-      # VALIDAR PLAYERDATA
-      # ==========================================
-
-      - name: Validar PlayerData
-        run: |
-          echo "========================================"
-          echo "VALIDANDO PLAYERDATA"
-          echo "========================================"
-
-          cd minecraft
-
-          echo ""
-          echo "Testando ZIP..."
-
-          if unzip -t playerdata.zip; then
-
-            echo ""
-            echo "========================================"
-            echo "ZIP VALIDO!"
-            echo "========================================"
-
-          else
-
-            echo ""
-            echo "========================================"
-            echo "ERRO: PLAYERDATA NAO E UM ZIP"
-            echo "========================================"
-
-            echo ""
-            echo "Tamanho:"
-            ls -lh playerdata.zip
-
-            echo ""
-            echo "Tipo:"
-            file playerdata.zip
-
-            echo ""
-            echo "Conteudo inicial:"
-
-            head -c 500 playerdata.zip || true
-
-            echo ""
-            echo ""
-
-            exit 1
-
-          fi
 
 
       # ==========================================
@@ -290,33 +235,51 @@ jobs:
           cd minecraft
 
           echo ""
-          echo "1. CONTEUDO DO ZIP:"
+          echo "Tipo do arquivo:"
 
-          unzip -l playerdata.zip
+          file playerdata.zip
 
           echo ""
-          echo "2. EXTRAINDO..."
+          echo "========================================"
+          echo "TESTANDO GZIP"
+          echo "========================================"
+
+          if gzip -t playerdata.zip; then
+
+            echo ""
+            echo "GZIP VALIDO!"
+
+          else
+
+            echo ""
+            echo "ERRO: ARQUIVO GZIP INVALIDO"
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "========================================"
+          echo "LISTANDO CONTEUDO"
+          echo "========================================"
+
+          tar -tzf playerdata.zip | head -100
+
+          echo ""
+          echo "========================================"
+          echo "EXTRAINDO PLAYERDATA"
+          echo "========================================"
 
           rm -rf playerdata_temp
 
           mkdir playerdata_temp
 
-          unzip -o playerdata.zip -d playerdata_temp
+          tar -xzf playerdata.zip -C playerdata_temp
 
           echo ""
-          echo "3. ESTRUTURA EXTRAIDA:"
+          echo "Estrutura extraida:"
 
           find playerdata_temp -maxdepth 6 -print
-
-          echo ""
-          echo "4. ARQUIVOS .DAT:"
-
-          find playerdata_temp -type f -name "*.dat" -print
-
-          echo ""
-          echo "5. QUANTIDADE DE .DAT:"
-
-          find playerdata_temp -type f -name "*.dat" | wc -l
 
           echo ""
           echo "========================================"
@@ -349,7 +312,7 @@ jobs:
             ls -lah world/playerdata
 
             echo ""
-            echo "Quantidade de arquivos .dat:"
+            echo "Quantidade de .dat:"
 
             find world/playerdata -type f -name "*.dat" | wc -l
 
@@ -357,21 +320,21 @@ jobs:
 
             echo ""
             echo "========================================"
-            echo "ERRO: PLAYERDATA NAO ENCONTRADO"
+            echo "PLAYERDATA NAO ENCONTRADO"
             echo "========================================"
 
             echo ""
-            echo "Nenhuma pasta chamada playerdata foi encontrada."
+            echo "Procurando arquivos .dat:"
+
+            find playerdata_temp -type f -name "*.dat" -print
 
             echo ""
-            echo "Arquivos encontrados:"
+            echo "Estrutura completa:"
 
-            find playerdata_temp -type f -print
+            find playerdata_temp -maxdepth 8 -print
 
             echo ""
-            echo "Pastas encontradas:"
-
-            find playerdata_temp -type d -print
+            echo "========================================"
 
             exit 1
 
@@ -471,12 +434,18 @@ jobs:
           echo "PlayerData:"
 
           if [ -d "world/playerdata" ]; then
+
             ls -lah world/playerdata
+
             echo ""
             echo "Arquivos .dat:"
+
             find world/playerdata -type f -name "*.dat" | wc -l
+
           else
+
             echo "Nenhuma pasta playerdata encontrada."
+
           fi
 
           echo ""
