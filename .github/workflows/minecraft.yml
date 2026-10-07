@@ -19,7 +19,6 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-
       # ============================================================
       # PAPER
       # ============================================================
@@ -29,9 +28,7 @@ jobs:
           mkdir -p minecraft
           cd minecraft
 
-          echo "========================================"
-          echo "BAIXANDO PAPER 1.21.11"
-          echo "========================================"
+          echo "Consultando builds do Paper..."
 
           RESPONSE=$(curl -fsSL \
             -H "User-Agent: fox-minecraft-test/1.0" \
@@ -40,7 +37,11 @@ jobs:
           DOWNLOAD_URL=$(echo "$RESPONSE" | \
             jq -r 'map(select(.channel == "STABLE")) | .[0].downloads["server:default"].url')
 
-          echo ""
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+            echo "ERRO: Não foi possível encontrar o download do Paper."
+            exit 1
+          fi
+
           echo "Download:"
           echo "$DOWNLOAD_URL"
 
@@ -49,10 +50,8 @@ jobs:
             -o paper.jar \
             "$DOWNLOAD_URL"
 
-          echo ""
           echo "Paper baixado:"
           ls -lh paper.jar
-
 
       # ============================================================
       # EULA
@@ -62,29 +61,24 @@ jobs:
         run: |
           echo "eula=true" > minecraft/eula.txt
 
-
       # ============================================================
       # FERRAMENTAS
       # ============================================================
 
       - name: Instalar ferramentas
         run: |
-          echo "========================================"
-          echo "INSTALANDO FERRAMENTAS"
-          echo "========================================"
-
           python3 -m pip install --upgrade pip
           python3 -m pip install gdown
           python3 -m pip install nbtlib
 
-          echo ""
           echo "gdown:"
           gdown --version
 
-          echo ""
           echo "nbtlib:"
           python3 -c "import nbtlib; print(nbtlib.__version__)"
 
+          echo "unzip:"
+          unzip -v | head -n 2
 
       # ============================================================
       # MAPAS
@@ -92,94 +86,48 @@ jobs:
 
       - name: Baixar mapas do Google Drive
         run: |
-          echo "========================================"
-          echo "BAIXANDO MAPAS"
-          echo "========================================"
-
           mkdir -p minecraft
 
-          echo ""
-          echo "Baixando Overworld..."
-
+          echo "Baixando mundo principal..."
           gdown \
             "https://drive.google.com/uc?id=1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-" \
             -O minecraft/world.zip
 
-          echo ""
           echo "Baixando Nether..."
-
           gdown \
             "https://drive.google.com/uc?id=1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM" \
             -O minecraft/world_nether.zip
 
-          echo ""
-          echo "Baixando The End..."
-
+          echo "Baixando End..."
           gdown \
             "https://drive.google.com/uc?id=1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt" \
             -O minecraft/world_the_end.zip
 
-          echo ""
-          echo "========================================"
-          echo "MAPAS BAIXADOS"
-          echo "========================================"
-
+          echo "Arquivos baixados:"
           ls -lh minecraft/*.zip
-
-
-      # ============================================================
-      # INSTALAR MAPAS
-      # ============================================================
 
       - name: Instalar mapas
         run: |
-          echo "========================================"
-          echo "INSTALANDO MAPAS"
-          echo "========================================"
-
           cd minecraft
 
+          echo "Removendo mundos antigos..."
           rm -rf world world_nether world_the_end
 
-          echo ""
-          echo "Extraindo Overworld..."
-
+          echo "Extraindo mundo principal..."
           unzip -q world.zip
 
-          echo ""
           echo "Extraindo Nether..."
-
           unzip -q world_nether.zip
 
-          echo ""
-          echo "Extraindo The End..."
-
+          echo "Extraindo End..."
           unzip -q world_the_end.zip
 
-          echo ""
-          echo "Removendo ZIPs..."
+          rm -f world.zip
+          rm -f world_nether.zip
+          rm -f world_the_end.zip
 
-          rm world.zip
-          rm world_nether.zip
-          rm world_the_end.zip
-
-          echo ""
-          echo "========================================"
-          echo "MUNDOS INSTALADOS"
-          echo "========================================"
-
-          echo ""
-          echo "Overworld:"
-          du -sh world
-
-          echo ""
-          echo "Nether:"
-          du -sh world_nether
-
-          echo ""
-          echo "The End:"
-          du -sh world_the_end
-
+          echo "Tamanho dos mundos:"
+          du -sh world world_nether world_the_end
 
       # ============================================================
       # PLUGINS
@@ -187,128 +135,116 @@ jobs:
 
       - name: Baixar plugins do Google Drive
         run: |
-          echo "========================================"
-          echo "BAIXANDO PLUGINS"
-          echo "========================================"
+          mkdir -p minecraft
 
-          mkdir -p minecraft/plugins
+          PLUGINS_ID="1Xfk68Fgf6hRhLJJ1ln5Jf2gKLeJ_n6iV"
 
-          PLUGINS_ID="1y3vtgiHBcqsgrWBIULTnwcPEextG-IXC"
-
-          echo ""
-          echo "ID dos plugins:"
-          echo "$PLUGINS_ID"
-
-          echo ""
-          echo "Baixando..."
+          echo "Baixando ZIP dos plugins..."
+          echo "ID: $PLUGINS_ID"
 
           gdown \
             "https://drive.google.com/uc?id=$PLUGINS_ID" \
             -O minecraft/plugins.zip
 
-          echo ""
-          echo "========================================"
-          echo "PLUGINS BAIXADOS"
-          echo "========================================"
-
+          echo "Arquivo recebido:"
           ls -lh minecraft/plugins.zip
 
-          echo ""
           echo "Tipo do arquivo:"
-
           file minecraft/plugins.zip
 
+          echo "Testando ZIP..."
+          unzip -t minecraft/plugins.zip
 
-      # ============================================================
-      # INSTALAR PLUGINS
-      # ============================================================
-
-      - name: Instalar plugins
+      - name: Instalar plugins e configurações
         run: |
-          echo "========================================"
-          echo "INSTALANDO PLUGINS"
-          echo "========================================"
-
           cd minecraft
 
-          rm -rf plugins
+          echo "=========================================="
+          echo "INSTALAÇÃO DOS PLUGINS"
+          echo "=========================================="
 
+          rm -rf plugins_temp
+          mkdir -p plugins_temp
           mkdir -p plugins
 
-          echo ""
-          echo "Extraindo plugins..."
-
+          echo "Extraindo ZIP..."
           unzip -q plugins.zip -d plugins_temp
 
           echo ""
-          echo "Estrutura encontrada:"
-
-          find plugins_temp \
-            -maxdepth 3 \
-            -type f \
-            -print | sort
+          echo "Conteúdo recebido:"
+          find plugins_temp -maxdepth 3 -print | sort
 
           echo ""
-          echo "========================================"
-          echo "ORGANIZANDO PLUGINS"
-          echo "========================================"
+          echo "Verificando estrutura..."
 
-          # Caso o ZIP tenha uma pasta plugins dentro dele,
-          # utiliza essa pasta como raiz.
+          # --------------------------------------------------------
+          # Caso 1:
+          #
+          # plugins.zip
+          # └── plugins/
+          #     ├── plugin.jar
+          #     └── plugin/
+          #
+          # --------------------------------------------------------
 
           if [ -d "plugins_temp/plugins" ]; then
 
-            echo ""
-            echo "Encontrada pasta plugins dentro do ZIP."
+            echo "Estrutura detectada: plugins/"
 
             cp -a plugins_temp/plugins/. plugins/
 
           else
 
-            echo ""
-            echo "Plugins encontrados diretamente no ZIP."
+            # ------------------------------------------------------
+            # Caso 2:
+            #
+            # plugins.zip
+            # ├── plugin.jar
+            # ├── plugin/
+            # └── ...
+            #
+            # ------------------------------------------------------
+
+            echo "Estrutura detectada: conteúdo direto."
 
             cp -a plugins_temp/. plugins/
 
           fi
 
           echo ""
-          echo "Removendo temporarios..."
+          echo "=========================================="
+          echo "PLUGINS INSTALADOS"
+          echo "=========================================="
+
+          echo ""
+          echo "JARs:"
+          find plugins -maxdepth 1 -type f -name "*.jar" \
+            -printf "%f\n" | sort
+
+          echo ""
+          echo "Pastas de configuração:"
+          find plugins -mindepth 1 -maxdepth 1 -type d \
+            -printf "%f\n" | sort
+
+          echo ""
+          echo "Quantidade de JARs:"
+          PLUGIN_COUNT=$(find plugins -maxdepth 1 -type f -name "*.jar" | wc -l)
+          echo "$PLUGIN_COUNT"
+
+          echo ""
+          echo "Tamanho da pasta plugins:"
+          du -sh plugins
+
+          # --------------------------------------------------------
+          # NÃO removemos as configurações.
+          # Apenas removemos os arquivos temporários.
+          # --------------------------------------------------------
 
           rm -rf plugins_temp
           rm -f plugins.zip
 
           echo ""
-          echo "========================================"
-          echo "PLUGINS INSTALADOS"
-          echo "========================================"
-
-          echo ""
-          echo "JARs encontrados:"
-
-          find plugins \
-            -maxdepth 1 \
-            -type f \
-            -name "*.jar" \
-            -printf "%f\n" | sort
-
-          echo ""
-          echo "Quantidade de JARs:"
-
-          find plugins \
-            -maxdepth 1 \
-            -type f \
-            -name "*.jar" | wc -l
-
-          echo ""
-          echo "Pastas de configuracao:"
-
-          find plugins \
-            -mindepth 1 \
-            -maxdepth 1 \
-            -type d \
-            -printf "%f\n" | sort
-
+          echo "Instalação concluída."
 
       # ============================================================
       # PLAYERDATA
@@ -316,78 +252,43 @@ jobs:
 
       - name: Baixar PlayerData do Google Drive
         run: |
-          echo "========================================"
-          echo "BAIXANDO PLAYERDATA"
-          echo "========================================"
-
           mkdir -p minecraft
 
           PLAYERDATA_ID="1LXkLNo6voDQb_T7rafrKv6R6MBomPfRv"
 
-          echo ""
-          echo "ID:"
-          echo "$PLAYERDATA_ID"
-
-          echo ""
-          echo "Baixando..."
+          echo "Baixando PlayerData..."
 
           gdown \
-            "$PLAYERDATA_ID" \
+            "https://drive.google.com/uc?id=$PLAYERDATA_ID" \
             -O minecraft/playerdata.gz
 
           echo ""
-          echo "========================================"
-          echo "ARQUIVO RECEBIDO"
-          echo "========================================"
-
+          echo "Arquivo:"
           ls -lh minecraft/playerdata.gz
 
           echo ""
           echo "Tipo:"
-
           file minecraft/playerdata.gz
-
-
-      # ============================================================
-      # INSTALAR PLAYERDATA
-      # ============================================================
 
       - name: Instalar PlayerData
         run: |
-          echo "========================================"
-          echo "INSTALANDO PLAYERDATA"
-          echo "========================================"
-
           cd minecraft
 
-          echo ""
-          echo "Validando GZIP..."
+          echo "=========================================="
+          echo "PLAYERDATA"
+          echo "=========================================="
 
           if ! gzip -t playerdata.gz; then
-            echo ""
             echo "ERRO: GZIP INVALIDO."
             exit 1
           fi
 
-          echo ""
-          echo "GZIP VALIDO!"
-
-          echo ""
-          echo "========================================"
-          echo "DESCOMPACTANDO"
-          echo "========================================"
+          echo "GZIP válido."
 
           gzip -dc playerdata.gz > playerdata.dat
 
-          echo ""
           echo "Arquivo descompactado:"
-
           ls -lh playerdata.dat
-
-          echo ""
-          echo "========================================"
-          echo "LENDO NBT DO PLAYER"
-          echo "========================================"
 
           python3 << 'PY'
           import nbtlib
@@ -398,50 +299,30 @@ jobs:
           source = "playerdata.dat"
           output_dir = "world/playerdata"
 
-          print("")
-          print("Carregando NBT...")
-          print("Arquivo:", source)
+          print("Lendo PlayerData NBT...")
 
           try:
               nbt = nbtlib.load(source, gzipped=False)
           except Exception as e:
-              print("")
-              print("ERRO AO LER NBT:")
-              print(e)
+              print("ERRO AO LER NBT:", e)
               raise SystemExit(1)
 
           print("")
-          print("NBT carregado com sucesso!")
-
-          print("")
-          print("Tags principais:")
+          print("Tags encontradas:")
 
           for key in nbt.keys():
               print(" -", key)
 
-          print("")
-          print("Procurando UUID...")
-
           found_uuid = None
 
+          # UUID moderno
           if "UUID" in nbt:
-
               value = nbt["UUID"]
 
-              print("")
-              print("Tag UUID encontrada:")
-              print(value)
-
               try:
-
                   values = [int(x) for x in value]
 
-                  print("")
-                  print("Valores UUID:")
-                  print(values)
-
                   if len(values) == 4:
-
                       raw = b"".join(
                           int(x & 0xffffffff).to_bytes(
                               4,
@@ -451,22 +332,15 @@ jobs:
                           for x in values
                       )
 
-                      found_uuid = str(
-                          uuid.UUID(bytes=raw)
-                      )
+                      found_uuid = str(uuid.UUID(bytes=raw))
 
               except Exception as e:
+                  print("Erro ao converter UUID:", e)
 
-                  print("")
-                  print("Erro ao converter UUID:")
-                  print(e)
-
+          # UUID antigo
           if found_uuid is None:
 
               if "UUIDMost" in nbt and "UUIDLeast" in nbt:
-
-                  print("")
-                  print("Encontrados UUIDMost e UUIDLeast.")
 
                   most = int(nbt["UUIDMost"])
                   least = int(nbt["UUIDLeast"])
@@ -475,52 +349,40 @@ jobs:
                   least &= (1 << 64) - 1
 
                   raw = (
-                      most.to_bytes(
-                          8,
-                          byteorder="big"
-                      )
-                      +
-                      least.to_bytes(
-                          8,
-                          byteorder="big"
-                      )
+                      most.to_bytes(8, byteorder="big") +
+                      least.to_bytes(8, byteorder="big")
                   )
 
-                  found_uuid = str(
-                      uuid.UUID(bytes=raw)
-                  )
+                  found_uuid = str(uuid.UUID(bytes=raw))
 
           if found_uuid is None:
-
-              print("")
-              print("========================================")
               print("UUID NAO ENCONTRADO")
-              print("========================================")
-
               raise SystemExit(1)
 
           print("")
-          print("========================================")
-          print("UUID ENCONTRADO")
-          print("========================================")
-
-          print("")
-          print("UUID:")
+          print("UUID encontrado:")
           print(found_uuid)
 
-          os.makedirs(
-              output_dir,
-              exist_ok=True
-          )
+          # Verificação do Ender Chest
+          if "EnderItems" in nbt:
+
+              ender = nbt["EnderItems"]
+
+              print("")
+              print("EnderItems encontrado.")
+              print("Quantidade de itens no Ender Chest:", len(ender))
+
+          else:
+
+              print("")
+              print("AVISO: EnderItems não encontrado no PlayerData.")
+
+          os.makedirs(output_dir, exist_ok=True)
 
           destination = os.path.join(
               output_dir,
               found_uuid + ".dat"
           )
-
-          print("")
-          print("Destino:")
-          print(destination)
 
           shutil.copyfile(
               source,
@@ -528,33 +390,17 @@ jobs:
           )
 
           print("")
-          print("========================================")
-          print("PLAYERDATA INSTALADO")
-          print("========================================")
-
-          print("")
-          print("Arquivo:")
+          print("PLAYERDATA INSTALADO:")
           print(destination)
-
-          print("")
-          print("Tamanho:")
-          print(
-              os.path.getsize(destination),
-              "bytes"
-          )
 
           PY
 
           echo ""
-          echo "========================================"
-          echo "PLAYERDATA FINAL"
-          echo "========================================"
-
+          echo "PlayerData instalado:"
           ls -lah world/playerdata
 
           echo ""
-          echo "Arquivos .dat:"
-
+          echo "Arquivos:"
           find world/playerdata \
             -type f \
             -name "*.dat" \
@@ -562,14 +408,12 @@ jobs:
 
           echo ""
           echo "Quantidade:"
-
           find world/playerdata \
             -type f \
             -name "*.dat" | wc -l
 
           rm -f playerdata.dat
           rm -f playerdata.gz
-
 
       # ============================================================
       # PLAYIT
@@ -579,9 +423,9 @@ jobs:
         env:
           PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
         run: |
-          echo "========================================"
+          echo "=========================================="
           echo "INICIANDO PLAYIT"
-          echo "========================================"
+          echo "=========================================="
 
           docker rm -f playit 2>/dev/null || true
 
@@ -593,18 +437,12 @@ jobs:
             -e SECRET_KEY="$PLAYIT_SECRET" \
             ghcr.io/playit-cloud/playit-agent:latest
 
-          echo ""
           echo "Aguardando Playit..."
-
           sleep 10
 
           echo ""
-          echo "========================================"
-          echo "LOG DO PLAYIT"
-          echo "========================================"
-
+          echo "Logs do Playit:"
           docker logs playit
-
 
       # ============================================================
       # VERIFICAR PLAYIT
@@ -612,37 +450,27 @@ jobs:
 
       - name: Verificar Playit
         run: |
-          echo "========================================"
-          echo "STATUS DO PLAYIT"
-          echo "========================================"
-
-          docker ps \
-            --filter "name=playit"
+          echo "Container:"
+          docker ps --filter "name=playit"
 
           echo ""
-          echo "Logs recentes:"
-
-          docker logs \
-            --tail 50 \
-            playit
-
+          echo "Últimos logs:"
+          docker logs --tail 50 playit
 
       # ============================================================
-      # VERIFICAR PLUGINS ANTES DO PAPER
+      # VERIFICAR PLUGINS
       # ============================================================
 
-      - name: Verificar plugins
+      - name: Verificar plugins antes de iniciar
         run: |
           cd minecraft
 
-          echo "========================================"
-          echo "VERIFICACAO DOS PLUGINS"
-          echo "========================================"
+          echo "=========================================="
+          echo "VERIFICAÇÃO FINAL DOS PLUGINS"
+          echo "=========================================="
 
           echo ""
-          echo "JARs instalados:"
-          echo ""
-
+          echo "Arquivos JAR:"
           find plugins \
             -maxdepth 1 \
             -type f \
@@ -650,30 +478,35 @@ jobs:
             -printf "%f\n" | sort
 
           echo ""
-          echo "========================================"
-          echo "QUANTIDADE"
-          echo "========================================"
+          echo "Total de JARs:"
 
           PLUGIN_COUNT=$(find plugins \
             -maxdepth 1 \
             -type f \
             -name "*.jar" | wc -l)
 
-          echo ""
-          echo "Total de JARs:"
           echo "$PLUGIN_COUNT"
 
-          echo ""
-          echo "========================================"
-          echo "CONFIGURACOES"
-          echo "========================================"
+          if [ "$PLUGIN_COUNT" -eq 0 ]; then
+            echo ""
+            echo "ERRO: NENHUM PLUGIN FOI ENCONTRADO!"
+            echo ""
+            echo "Conteúdo da pasta plugins:"
+            find plugins -maxdepth 3 -print
+            exit 1
+          fi
 
+          echo ""
+          echo "Pastas de configuração:"
           find plugins \
             -mindepth 1 \
             -maxdepth 1 \
             -type d \
             -printf "%f\n" | sort
 
+          echo ""
+          echo "Tamanho:"
+          du -sh plugins
 
       # ============================================================
       # INICIAR MINECRAFT
@@ -683,25 +516,20 @@ jobs:
         run: |
           cd minecraft
 
-          echo "========================================"
+          echo "=========================================="
           echo "INICIANDO MINECRAFT"
-          echo "========================================"
+          echo "=========================================="
 
           echo ""
           echo "Java:"
-
           java -version
 
           echo ""
           echo "Paper:"
-
           ls -lh paper.jar
 
           echo ""
-          echo "========================================"
-          echo "PLUGINS"
-          echo "========================================"
-
+          echo "Plugins:"
           find plugins \
             -maxdepth 1 \
             -type f \
@@ -709,42 +537,25 @@ jobs:
             -printf "%f\n" | sort
 
           echo ""
-          echo "========================================"
-          echo "MUNDOS"
-          echo "========================================"
-
-          du -sh \
-            world \
-            world_nether \
-            world_the_end
+          echo "Mundos:"
+          du -sh world world_nether world_the_end
 
           echo ""
-          echo "========================================"
-          echo "PLAYERDATA"
-          echo "========================================"
-
+          echo "PlayerData:"
           if [ -d "world/playerdata" ]; then
-
             ls -lah world/playerdata
-
-            echo ""
-            echo "Arquivos .dat:"
-
             find world/playerdata \
               -type f \
               -name "*.dat" \
               -print
-
           else
-
             echo "Nenhuma pasta playerdata encontrada."
-
           fi
 
           echo ""
-          echo "========================================"
-          echo "SERVIDOR INICIANDO"
-          echo "========================================"
+          echo "=========================================="
+          echo "PAPER INICIANDO"
+          echo "=========================================="
 
           java \
             -Xms2G \
@@ -752,21 +563,15 @@ jobs:
             -jar paper.jar \
             nogui
 
-
       # ============================================================
-      # LOG FINAL DO PLAYIT
+      # LOGS PLAYIT
       # ============================================================
 
       - name: Mostrar logs do Playit
         if: always()
         run: |
-          echo "========================================"
-          echo "LOG FINAL DO PLAYIT"
-          echo "========================================"
+          echo "=========================================="
+          echo "LOGS FINAIS DO PLAYIT"
+          echo "=========================================="
 
           docker logs playit || true
-
-          echo ""
-          echo "========================================"
-          echo "FIM DO WORKFLOW"
-          echo "========================================"
