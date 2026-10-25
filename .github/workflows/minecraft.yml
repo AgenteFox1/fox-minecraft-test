@@ -80,6 +80,25 @@ jobs:
           python3 -c "import nbtlib; print(nbtlib.__version__)"
 
       # ============================================================
+      # RCLONE / GOOGLE DRIVE
+      # ============================================================
+
+      - name: Configurar acesso ao Google Drive
+        env:
+          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rclone
+
+          mkdir -p "$HOME/.config/rclone"
+          printf '%s' "$RCLONE_CONFIG_B64" | base64 --decode > "$HOME/.config/rclone/rclone.conf"
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+
+          echo "Rclone instalado e configuração carregada."
+          rclone version | head -n 1
+          rclone listremotes
+
+      # ============================================================
       # MAPAS
       # ============================================================
 
@@ -358,261 +377,40 @@ jobs:
           echo "=========================================="
 
       # ============================================================
-      # PLAYERDATA
+      # RESTAURAR BACKUP DO GOOGLE DRIVE (SE EXISTIR)
       # ============================================================
 
-      - name: Baixar PlayerData do Google Drive
+      - name: Restaurar último backup do servidor
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-          mkdir -p minecraft
+          set -euo pipefail
+          mkdir -p backup_tmp
 
-          PLAYERDATA_ID="1LXkLNo6voDQb_T7rafrKv6R6MBomPfRv"
+          echo "Verificando a pasta de backups no Google Drive..."
+          rclone lsf "gdrive2:" --drive-root-folder-id "$GDRIVE_FOLDER_ID" > backup_tmp/drive-files.txt
+          cat backup_tmp/drive-files.txt
 
-          echo "=========================================="
-          echo "BAIXANDO PLAYERDATA"
-          echo "=========================================="
+          if grep -Fxq "server-backup-latest.tar.gz" backup_tmp/drive-files.txt; then
+            echo "Backup encontrado; baixando..."
+            rclone copyto \
+              "gdrive2:server-backup-latest.tar.gz" \
+              backup_tmp/server-backup-latest.tar.gz \
+              --drive-root-folder-id "$GDRIVE_FOLDER_ID"
 
-          gdown \
-            "https://drive.google.com/uc?id=$PLAYERDATA_ID" \
-            -O minecraft/playerdata.gz
+            echo "Validando arquivo de backup..."
+            tar -tzf backup_tmp/server-backup-latest.tar.gz > /dev/null
 
-          echo ""
-          echo "Arquivo:"
-
-          ls -lh minecraft/playerdata.gz
-
-          echo ""
-          echo "Tipo:"
-
-          file minecraft/playerdata.gz
-
-      # ============================================================
-      # INSTALAR PLAYERDATA
-      # ============================================================
-
-      - name: Instalar PlayerData
-        run: |
-          cd minecraft
-
-          echo "=========================================="
-          echo "INSTALANDO PLAYERDATA"
-          echo "=========================================="
-
-          if ! gzip -t playerdata.gz; then
-
-            echo "ERRO: GZIP INVALIDO."
-
-            exit 1
-
+            echo "Removendo cópias-base dos mundos/plugins antes da restauração..."
+            rm -rf minecraft/world minecraft/world_nether minecraft/world_the_end minecraft/plugins
+            echo "Restaurando mundos, dados dos jogadores e plugins..."
+            tar -xzf backup_tmp/server-backup-latest.tar.gz -C minecraft
+            echo "Backup restaurado com sucesso."
+          else
+            echo "Nenhum backup anterior encontrado. Será usada a cópia inicial dos mundos."
           fi
 
-          echo "GZIP válido."
-
-          gzip -dc playerdata.gz > playerdata.dat
-
-          echo ""
-          echo "Arquivo descompactado:"
-
-          ls -lh playerdata.dat
-
-          python3 << 'PY'
-          import nbtlib
-          import uuid
-          import os
-          import shutil
-
-          source = "playerdata.dat"
-          output_dir = "world/playerdata"
-
-          print("Lendo PlayerData NBT...")
-
-          try:
-
-              nbt = nbtlib.load(
-                  source,
-                  gzipped=False
-              )
-
-          except Exception as e:
-
-              print("ERRO AO LER NBT:", e)
-
-              raise SystemExit(1)
-
-          print("")
-          print("Tags encontradas:")
-
-          for key in nbt.keys():
-
-              print(" -", key)
-
-          found_uuid = None
-
-          # ========================================================
-          # UUID MODERNO
-          # ========================================================
-
-          if "UUID" in nbt:
-
-              value = nbt["UUID"]
-
-              try:
-
-                  values = [int(x) for x in value]
-
-                  if len(values) == 4:
-
-                      raw = b"".join(
-                          int(x & 0xffffffff).to_bytes(
-                              4,
-                              byteorder="big",
-                              signed=False
-                          )
-                          for x in values
-                      )
-
-                      found_uuid = str(
-                          uuid.UUID(
-                              bytes=raw
-                          )
-                      )
-
-              except Exception as e:
-
-                  print(
-                      "Erro ao converter UUID:",
-                      e
-                  )
-
-          # ========================================================
-          # UUID ANTIGO
-          # ========================================================
-
-          if found_uuid is None:
-
-              if "UUIDMost" in nbt and "UUIDLeast" in nbt:
-
-                  most = int(
-                      nbt["UUIDMost"]
-                  )
-
-                  least = int(
-                      nbt["UUIDLeast"]
-                  )
-
-                  most &= (1 << 64) - 1
-                  least &= (1 << 64) - 1
-
-                  raw = (
-                      most.to_bytes(
-                          8,
-                          byteorder="big"
-                      )
-                      +
-                      least.to_bytes(
-                          8,
-                          byteorder="big"
-                      )
-                  )
-
-                  found_uuid = str(
-                      uuid.UUID(
-                          bytes=raw
-                      )
-                  )
-
-          # ========================================================
-          # VALIDAR UUID
-          # ========================================================
-
-          if found_uuid is None:
-
-              print(
-                  "UUID NAO ENCONTRADO"
-              )
-
-              raise SystemExit(1)
-
-          print("")
-          print("UUID encontrado:")
-          print(found_uuid)
-
-          # ========================================================
-          # VERIFICAR ENDER CHEST
-          # ========================================================
-
-          if "EnderItems" in nbt:
-
-              ender = nbt["EnderItems"]
-
-              print("")
-              print(
-                  "EnderItems encontrado."
-              )
-
-              print(
-                  "Quantidade de itens no Ender Chest:",
-                  len(ender)
-              )
-
-          else:
-
-              print("")
-              print(
-                  "AVISO: EnderItems não encontrado."
-              )
-
-          # ========================================================
-          # INSTALAR
-          # ========================================================
-
-          os.makedirs(
-              output_dir,
-              exist_ok=True
-          )
-
-          destination = os.path.join(
-              output_dir,
-              found_uuid + ".dat"
-          )
-
-          shutil.copyfile(
-              source,
-              destination
-          )
-
-          print("")
-          print(
-              "PLAYERDATA INSTALADO:"
-          )
-
-          print(destination)
-
-          PY
-
-          echo ""
-          echo "=========================================="
-          echo "PLAYERDATA INSTALADO"
-          echo "=========================================="
-
-          ls -lah world/playerdata
-
-          echo ""
-          echo "Arquivos:"
-
-          find world/playerdata \
-            -type f \
-            -name "*.dat" \
-            -print
-
-          echo ""
-          echo "Quantidade:"
-
-          find world/playerdata \
-            -type f \
-            -name "*.dat" | wc -l
-
-          rm -f playerdata.dat
-          rm -f playerdata.gz
+          rm -rf backup_tmp
 
       # ============================================================
       # PLAYIT
@@ -735,72 +533,144 @@ jobs:
           du -sh plugins
 
       # ============================================================
-      # INICIAR MINECRAFT
+      # INICIAR MINECRAFT + BACKUPS PERIODICOS
       # ============================================================
 
-      - name: Iniciar Minecraft
+      - name: Iniciar Minecraft e fazer backups periódicos
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-
+          set -euo pipefail
           cd minecraft
 
-          echo "=========================================="
-          echo "INICIANDO MINECRAFT"
-          echo "=========================================="
-
-          echo ""
           echo "Java:"
-
           java -version
-
-          echo ""
           echo "Paper:"
-
           ls -lh paper.jar
-
-          echo ""
-          echo "Plugins:"
-
-          find plugins \
-            -maxdepth 1 \
-            -type f \
-            -name "*.jar" \
-            -printf "%f\n" | sort
-
-          echo ""
           echo "Mundos:"
+          du -sh world world_nether world_the_end
+          echo "Plugins:"
+          find plugins -maxdepth 1 -type f -name '*.jar' -printf '%f\n' | sort
 
-          du -sh world
-          du -sh world_nether
-          du -sh world_the_end
+          cat > /tmp/minecraft_session.py <<'PY'
+          import os
+          import subprocess
+          import time
+          import tarfile
+          from pathlib import Path
 
-          echo ""
-          echo "PlayerData:"
+          folder_id = os.environ["GDRIVE_FOLDER_ID"]
+          root = Path.cwd()
+          archive = Path("/tmp/server-backup-latest.tar.gz")
+          log_path = root / "server.log"
+          max_session_seconds = 5 * 60 * 60 + 25 * 60  # encerrar antes do limite de 6h do GitHub Actions
+          backup_interval_seconds = 10 * 60
 
-          if [ -d "world/playerdata" ]; then
+          with log_path.open("a", buffering=1) as log:
+              server = subprocess.Popen(
+                  ["java", "-Xms2G", "-Xmx8G", "-jar", "paper.jar", "nogui"],
+                  stdin=subprocess.PIPE,
+                  stdout=log,
+                  stderr=subprocess.STDOUT,
+                  text=True,
+                  bufsize=1,
+              )
 
-            ls -lah world/playerdata
+              def command(text):
+                  if server.poll() is None and server.stdin:
+                      server.stdin.write(text + "\n")
+                      server.stdin.flush()
 
-            find world/playerdata \
-              -type f \
-              -name "*.dat" \
-              -print
+              def make_backup(label):
+                  print(f"Iniciando backup ({label})...", flush=True)
+                  command("save-all flush")
+                  time.sleep(5)
+                  command("save-off")
+                  time.sleep(2)
+                  try:
+                      members = [
+                          name for name in [
+                              "world", "world_nether", "world_the_end", "plugins",
+                              "server.properties", "ops.json", "whitelist.json",
+                              "banned-players.json", "banned-ips.json", "usercache.json"
+                          ] if (root / name).exists()
+                      ]
+                      if not all((root / name).exists() for name in ["world", "world_nether", "world_the_end"]):
+                          raise RuntimeError("Um ou mais diretórios de mundo não foram encontrados; backup cancelado.")
+                      with tarfile.open(archive, "w:gz") as tar:
+                          for name in members:
+                              tar.add(root / name, arcname=name, recursive=True)
+                      # Mantém uma cópia anterior para reduzir o risco de perder o último backup durante um upload interrompido.
+                      subprocess.run([
+                          "rclone", "copyto", "gdrive2:server-backup-latest.tar.gz",
+                          "gdrive2:server-backup-previous.tar.gz",
+                          "--drive-root-folder-id", folder_id
+                      ], check=False, stdout=log, stderr=subprocess.STDOUT)
+                      subprocess.run([
+                          "rclone", "copyto", str(archive), "gdrive2:server-backup-latest.tar.gz",
+                          "--drive-root-folder-id", folder_id
+                      ], check=True, stdout=log, stderr=subprocess.STDOUT)
+                      print(f"Backup enviado ao Google Drive ({label}).", flush=True)
+                  finally:
+                      command("save-on")
 
-          else
+              started = time.monotonic()
+              next_backup = started + 120  # primeiro backup após 2 minutos; depois, a cada 10 minutos
+              print("Servidor iniciado. Primeiro backup em 2 minutos; depois, a cada 10 minutos.", flush=True)
 
-            echo "Nenhuma pasta playerdata encontrada."
+              try:
+                  while server.poll() is None:
+                      now = time.monotonic()
+                      if now >= started + max_session_seconds:
+                          print("Limite seguro de sessão atingido; preparando encerramento.", flush=True)
+                          break
+                      if now >= next_backup:
+                          make_backup("periódico")
+                          next_backup = time.monotonic() + backup_interval_seconds
+                      time.sleep(5)
 
-          fi
+                  if server.poll() is None:
+                      make_backup("final")
+                      command("stop")
+                      try:
+                          server.wait(timeout=90)
+                      except subprocess.TimeoutExpired:
+                          server.terminate()
+                          try:
+                              server.wait(timeout=15)
+                          except subprocess.TimeoutExpired:
+                              server.kill()
+                              server.wait()
+                  else:
+                      # Se o servidor encerrar sozinho, tentamos salvar os arquivos restantes.
+                      print(f"Servidor encerrou com código {server.returncode}.", flush=True)
+              except Exception:
+                  print("ERRO durante a sessão/backup; tentando encerrar o servidor com segurança.", flush=True)
+                  if server.poll() is None:
+                      command("save-all flush")
+                      time.sleep(5)
+                      command("stop")
+                      try:
+                          server.wait(timeout=60)
+                      except subprocess.TimeoutExpired:
+                          server.terminate()
+                          server.wait(timeout=15)
+                  raise
 
-          echo ""
-          echo "=========================================="
-          echo "PAPER INICIANDO"
-          echo "=========================================="
+              if server.returncode not in (0, None):
+                  raise SystemExit(server.returncode)
+          PY
 
-          java \
-            -Xms2G \
-            -Xmx8G \
-            -jar paper.jar \
-            nogui
+          # Exibe o log do servidor enquanto o script de controle roda.
+          touch server.log
+          tail -n +1 -F server.log &
+          TAIL_PID=$!
+          set +e
+          python3 /tmp/minecraft_session.py
+          RESULT=$?
+          set -e
+          kill "$TAIL_PID" 2>/dev/null || true
+          exit "$RESULT"
 
       # ============================================================
       # LOGS DO PLAYIT
@@ -809,9 +679,7 @@ jobs:
       - name: Mostrar logs do Playit
         if: always()
         run: |
-
           echo "=========================================="
           echo "LOGS FINAIS DO PLAYIT"
           echo "=========================================="
-
           docker logs playit || true
