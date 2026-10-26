@@ -1,3 +1,4 @@
+```yaml
 name: Minecraft Test
 
 on:
@@ -19,13 +20,12 @@ jobs:
 
       # ============================================================
       # FERRAMENTAS ESSENCIAIS
-      # Instala jq antes de usá-lo no download do Paper.
       # ============================================================
       - name: Instalar ferramentas essenciais
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y curl jq unzip
+          sudo apt-get install -y curl jq unzip file
           python3 -m pip install --upgrade pip
           python3 -m pip install gdown nbtlib
 
@@ -64,17 +64,13 @@ jobs:
         run: echo "eula=true" > minecraft/eula.txt
 
       # ============================================================
-      # FERRAMENTAS ADICIONAIS
+      # RCLONE
       # ============================================================
       - name: Instalar ferramentas adicionais
         run: |
           set -euo pipefail
-          sudo apt-get update
           sudo apt-get install -y rclone
 
-      # ============================================================
-      # GOOGLE DRIVE
-      # ============================================================
       - name: Configurar acesso ao Google Drive
         env:
           RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
@@ -120,7 +116,7 @@ jobs:
           du -sh world world_nether world_the_end
 
       # ============================================================
-      # RESTAURAR BACKUP ANTES DE INSTALAR OS PLUGINS
+      # RESTAURAR BACKUP
       # ============================================================
       - name: Restaurar último backup do servidor
         env:
@@ -130,6 +126,7 @@ jobs:
           mkdir -p backup_tmp
 
           echo "Verificando backups no Google Drive..."
+
           rclone lsf "gdrive2:" \
             --drive-root-folder-id "$GDRIVE_FOLDER_ID" \
             > backup_tmp/drive-files.txt
@@ -170,7 +167,8 @@ jobs:
           set -euo pipefail
           mkdir -p minecraft
 
-          PLUGINS_ID="1Zttp-T4pSqPAVhqihyZdDJ4rO2F-NaLm"
+          # NOVO ZIP ENVIADO PELO USUÁRIO
+          PLUGINS_ID="14OF6wa80pT4VOJch7-8kdvs42jRnCj78"
 
           echo "Baixando novo pacote de plugins..."
 
@@ -182,7 +180,7 @@ jobs:
           unzip -t minecraft/plugins.zip
 
       # ============================================================
-      # INSTALAR PLUGINS APÓS RESTAURAR O BACKUP
+      # INSTALAR PLUGINS
       # ============================================================
       - name: Instalar plugins e configurações
         run: |
@@ -195,7 +193,7 @@ jobs:
           unzip -q plugins.zip -d plugins_temp
 
           echo "Estrutura do ZIP:"
-          find plugins_temp -maxdepth 3 -print | sort
+          find plugins_temp -maxdepth 4 -print | sort
 
           SOURCE=""
 
@@ -211,21 +209,21 @@ jobs:
 
           echo "Pasta de origem: $SOURCE"
 
-          # Copia os JARs e arquivos do pacote novo.
-          # Os arquivos com caminhos iguais serão atualizados.
+          # Atualiza os arquivos presentes no pacote novo,
+          # mantendo arquivos de configuração não substituídos.
           cp -a "$SOURCE"/. plugins/
 
           # Remove plugins que não devem ser instalados.
           rm -f plugins/OpenShulker*.jar
           rm -rf plugins/OpenShulker
+
           rm -f plugins/SkinsRestorer*.jar
           rm -rf plugins/SkinsRestorer
 
           # Remove estruturas aninhadas desnecessárias.
           rm -rf plugins/plugins plugins/Plugins
 
-          # Evita manter a versão antiga conhecida do EssentialsX
-          # junto da versão mais recente presente no pacote.
+          # Evita duplicidade com a versão mais recente do EssentialsX.
           rm -f plugins/EssentialsX-2.22.0.jar
 
           echo "JARs instalados:"
@@ -241,8 +239,23 @@ jobs:
           fi
 
           echo "Total de JARs: $PLUGIN_COUNT"
+
           echo "Pastas de configuração:"
-          find plugins -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort
+          find plugins -mindepth 1 -maxdepth 1 -type d \
+            -printf "%f\n" | sort
+
+          # Diagnóstico das dependências solicitadas.
+          echo "Arquivos relacionados ao Minepacks e CommandPanels:"
+          find plugins -maxdepth 2 -type f \
+            \( -iname '*minepacks*' \
+            -o -iname '*commandpanels*' \
+            -o -iname '*pcgf*' \
+            -o -iname '*pluginlib*' \
+            -o -iname '*placeholderapi*' \
+            -o -iname '*vault*' \
+            -o -iname '*protocolib*' \) \
+            -printf "%P\n" | sort
+
           du -sh plugins
 
           rm -rf plugins_temp
@@ -282,8 +295,9 @@ jobs:
           fi
 
           for file in \
-            banned-ips.json banned-players.json bukkit.yml commands.yml \
-            help.yml ops.json server.properties spigot.yml whitelist.json; do
+            banned-ips.json banned-players.json banned-players.json \
+            bukkit.yml commands.yml help.yml ops.json server.properties \
+            spigot.yml whitelist.json; do
             if [ -f "$CONFIG_ROOT/$file" ]; then
               cp "$CONFIG_ROOT/$file" minecraft/
               echo "Instalado: $file"
@@ -295,7 +309,7 @@ jobs:
             cp -a "$CONFIG_ROOT/config" minecraft/config
           fi
 
-          # Mantém online-mode=false para a configuração atual do servidor.
+          # Mantém online-mode=false para o servidor com Playit.
           if grep -qE '^[[:space:]]*online-mode=' minecraft/server.properties; then
             sed -i -E 's/^[[:space:]]*online-mode=.*/online-mode=false/' \
               minecraft/server.properties
@@ -354,7 +368,7 @@ jobs:
           docker logs --tail 50 playit
 
       # ============================================================
-      # VERIFICAÇÃO FINAL DOS PLUGINS
+      # VERIFICAÇÃO DOS PLUGINS ANTES DE INICIAR
       # ============================================================
       - name: Verificar plugins antes de iniciar
         run: |
@@ -374,8 +388,14 @@ jobs:
             exit 1
           fi
 
-          echo "Verificando possíveis JARs duplicados do EssentialsX:"
-          find plugins -maxdepth 1 -type f -iname 'EssentialsX*.jar' -printf '%f\n' | sort
+          echo "Verificando JARs do EssentialsX:"
+          find plugins -maxdepth 1 -type f \
+            -iname 'EssentialsX*.jar' -printf '%f\n' | sort
+
+          echo "Verificando arquivos das bibliotecas:"
+          find plugins -maxdepth 2 -type f \
+            \( -iname '*pcgf*' -o -iname '*pluginlib*' \) \
+            -printf '%P\n' | sort || true
 
           echo "Tamanho da pasta:"
           du -sh plugins
@@ -393,6 +413,8 @@ jobs:
           java -version
           ls -lh paper.jar
           du -sh world world_nether world_the_end
+
+          echo "JARs que serão carregados:"
           find plugins -maxdepth 1 -type f -name '*.jar' \
             -printf '%f\n' | sort
 
@@ -452,7 +474,7 @@ jobs:
                           for name in members:
                               tar.add(root / name, arcname=name, recursive=True)
 
-                      # Tenta preservar o backup anterior antes de atualizar o atual.
+                      # Tenta preservar o backup anterior.
                       subprocess.run([
                           "rclone", "copyto",
                           "gdrive2:server-backup-latest.tar.gz",
@@ -542,7 +564,28 @@ jobs:
           set -e
 
           kill "$TAIL_PID" 2>/dev/null || true
+
+          echo "Resumo dos erros relevantes do servidor:"
+          grep -Ein \
+            'CommandPanels|Minepacks|PCGF_PluginLib|PluginsLib|Could not load|Failed to load|NoClassDefFoundError|ClassNotFoundException|UnsupportedClassVersionError|ERROR|Exception' \
+            server.log | tail -n 250 || true
+
           exit "$RESULT"
+
+      # ============================================================
+      # PUBLICAR LOGS COMO ARTEFATO
+      # Permite baixar os logs sem usar "View raw logs".
+      # ============================================================
+      - name: Disponibilizar logs e relatório dos plugins
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-diagnostico
+          path: |
+            minecraft/server.log
+            minecraft/plugins/*.jar
+          if-no-files-found: warn
+          retention-days: 3
 
       # ============================================================
       # LOGS FINAIS DO PLAYIT
@@ -552,3 +595,4 @@ jobs:
         run: |
           echo "Logs finais do Playit:"
           docker logs playit || true
+```
