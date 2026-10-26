@@ -1,646 +1,491 @@
-
+# .github/workflows/minecraft.yml
 name: Minecraft Test
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  minecraft:
+  server:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
 
     steps:
-      # ============================================================
-      # JAVA
-      # ============================================================
-      - name: Configurar Java 21
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      # ============================================================
-      # FERRAMENTAS
-      # ============================================================
-      - name: Instalar ferramentas essenciais
+      - name: Preparar ambiente
+        shell: bash
         run: |
-          set -euo pipefail
+          set -e
           sudo apt-get update
-          sudo apt-get install -y curl jq unzip file rclone
-          python3 -m pip install --upgrade pip
-          python3 -m pip install gdown nbtlib
+          sudo apt-get install -y curl jq unzip tar gzip
+          sudo apt-get install -y openjdk-21-jre-headless
+          sudo apt-get install -y rclone
+          python3 -m pip install --user --break-system-packages gdown
 
-      # ============================================================
-      # PAPER
-      # ============================================================
-      - name: Baixar Paper 1.21.11
+          mkdir -p minecraft/plugins minecraft/diagnostico
+          mkdir -p "$HOME/.config/rclone"
+
+      - name: Configurar Google Drive
+        shell: bash
+        env:
+          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           set -euo pipefail
-          mkdir -p minecraft
-          cd minecraft
 
-          RESPONSE=$(curl -fsSL \
-            -H "User-Agent: fox-minecraft-test/1.0" \
-            "https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds")
-
-          DOWNLOAD_URL=$(echo "$RESPONSE" | \
-            jq -r 'map(select(.channel == "STABLE")) | .[0].downloads["server:default"].url')
-
-          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-            echo "ERRO: não foi possível encontrar o download do Paper."
+          if [ -z "$RCLONE_CONFIG_B64" ]; then
+            echo "ERRO: o secret RCLONE_CONFIG_B64 não está configurado."
             exit 1
           fi
 
-          curl -fL \
-            -H "User-Agent: fox-minecraft-test/1.0" \
-            -o paper.jar \
-            "$DOWNLOAD_URL"
+          if [ -z "$GDRIVE_FOLDER_ID" ]; then
+            echo "ERRO: o secret GDRIVE_FOLDER_ID não está configurado."
+            exit 1
+          fi
 
-          ls -lh paper.jar
-
-      # ============================================================
-      # EULA
-      # ============================================================
-      - name: Aceitar EULA
-        run: echo "eula=true" > minecraft/eula.txt
-
-      # ============================================================
-      # GOOGLE DRIVE
-      # ============================================================
-      - name: Configurar acesso ao Google Drive
-        env:
-          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p "$HOME/.config/rclone"
-
-          printf '%s' "$RCLONE_CONFIG_B64" | base64 --decode \
+          echo "$RCLONE_CONFIG_B64" | base64 -d \
             > "$HOME/.config/rclone/rclone.conf"
 
           chmod 600 "$HOME/.config/rclone/rclone.conf"
 
-          rclone version | head -n 1
+          # O remote gdrive2 deve estar definido no arquivo do rclone.
+          # O ID informado passa a ser a pasta-raiz usada para os backups.
+          rclone config update gdrive2 root_folder_id "$GDRIVE_FOLDER_ID"
+
           rclone listremotes
 
-      # ============================================================
-      # MAPAS BASE
-      # ============================================================
-      - name: Baixar mapas do Google Drive
-        run: |
-          set -euo pipefail
-          mkdir -p minecraft
-
-          gdown "https://drive.google.com/uc?id=1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-" \
-            -O minecraft/world.zip
-
-          gdown "https://drive.google.com/uc?id=1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM" \
-            -O minecraft/world_nether.zip
-
-          gdown "https://drive.google.com/uc?id=1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt" \
-            -O minecraft/world_the_end.zip
-
-          ls -lh minecraft/*.zip
-
-      - name: Instalar mapas base
-        run: |
-          set -euo pipefail
-          cd minecraft
-
-          rm -rf world world_nether world_the_end
-
-          unzip -q world.zip
-          unzip -q world_nether.zip
-          unzip -q world_the_end.zip
-
-          rm -f world.zip world_nether.zip world_the_end.zip
-
-          du -sh world world_nether world_the_end
-
-      # ============================================================
-      # RESTAURAR BACKUP
-      # ============================================================
       - name: Restaurar último backup do servidor
-        env:
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p backup_tmp
 
-          echo "Verificando backups no Google Drive..."
+          mkdir -p minecraft
+          echo "Procurando o backup mais recente no Google Drive..."
 
-          rclone lsf "gdrive2:" \
-            --drive-root-folder-id "$GDRIVE_FOLDER_ID" \
-            > backup_tmp/drive-files.txt
+          if rclone copyto \
+            "gdrive2:server-backup-latest.tar.gz" \
+            /tmp/server-backup-latest.tar.gz; then
 
-          cat backup_tmp/drive-files.txt
+            echo "Backup encontrado. Validando arquivo..."
+            tar -tzf /tmp/server-backup-latest.tar.gz >/dev/null
 
-          if grep -Fxq "server-backup-latest.tar.gz" backup_tmp/drive-files.txt; then
-            echo "Backup encontrado. Baixando..."
-
-            rclone copyto \
-              "gdrive2:server-backup-latest.tar.gz" \
-              backup_tmp/server-backup-latest.tar.gz \
-              --drive-root-folder-id "$GDRIVE_FOLDER_ID"
-
-            echo "Validando backup..."
-            tar -tzf backup_tmp/server-backup-latest.tar.gz > /dev/null
-
-            echo "Restaurando backup..."
-
-            rm -rf minecraft/world \
-              minecraft/world_nether \
-              minecraft/world_the_end \
-              minecraft/plugins
-
-            tar -xzf backup_tmp/server-backup-latest.tar.gz -C minecraft
+            tar -xzf /tmp/server-backup-latest.tar.gz \
+              -C minecraft
 
             echo "Backup restaurado."
           else
-            echo "Nenhum backup anterior encontrado. Usando os mapas base."
+            echo "Não foi encontrado um backup anterior."
+            echo "O workflow tentará recuperar os mundos pelos arquivos individuais."
           fi
 
-          rm -rf backup_tmp
-
-      # ============================================================
-      # BAIXAR NOVO PACOTE DE PLUGINS
-      # ============================================================
-      - name: Baixar plugins do Google Drive
+      - name: Recuperar mundos que ainda não existem
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p minecraft
 
-          PLUGINS_ID="14OF6wa80pT4VOJch7-8kdvs42jRnCj78"
+          download_world() {
+            local world_name="$1"
+            local file_id="$2"
+            local target="/tmp/${world_name}.zip"
 
-          echo "Baixando pacote atualizado de plugins..."
-
-          gdown \
-            "https://drive.google.com/uc?id=$PLUGINS_ID" \
-            -O minecraft/plugins.zip
-
-          file minecraft/plugins.zip
-          unzip -t minecraft/plugins.zip
-
-      # ============================================================
-      # INSTALAR PLUGINS
-      # ============================================================
-      - name: Instalar plugins e configurações
-        run: |
-          set -euo pipefail
-          cd minecraft
-
-          rm -rf plugins_temp
-          mkdir -p plugins_temp plugins
-
-          unzip -q plugins.zip -d plugins_temp
-
-          echo "Estrutura encontrada no ZIP:"
-          find plugins_temp -maxdepth 5 -print | sort
-
-          SOURCE=""
-
-          if [ -d "plugins_temp/plugins/Plugins" ]; then
-            SOURCE="plugins_temp/plugins/Plugins"
-          elif [ -d "plugins_temp/Plugins" ]; then
-            SOURCE="plugins_temp/Plugins"
-          elif [ -d "plugins_temp/plugins" ]; then
-            SOURCE="plugins_temp/plugins"
-          else
-            SOURCE="plugins_temp"
-          fi
-
-          echo "Pasta de origem: $SOURCE"
-
-          # Copia os arquivos do pacote novo.
-          cp -a "$SOURCE"/. plugins/
-
-          # CORREÇÃO:
-          # Procura JARs dentro de subpastas e copia-os para
-          # a raiz de plugins, onde o Paper consegue encontrá-los.
-          while IFS= read -r -d '' jar; do
-            filename="$(basename "$jar")"
-            destination="plugins/$filename"
-
-            if [ "$jar" != "$destination" ]; then
-              echo "Copiando JAR para a raiz: $jar"
-              cp -f "$jar" "$destination"
+            if [ -d "minecraft/${world_name}" ]; then
+              echo "Mundo ${world_name} já existe; não será sobrescrito."
+              return 0
             fi
-          done < <(
-            find plugins -mindepth 2 -type f -name '*.jar' -print0
-          )
 
-          # Remove plugins que não devem ser instalados.
-          rm -f plugins/OpenShulker*.jar
-          rm -rf plugins/OpenShulker
+            echo "Tentando recuperar o mundo ${world_name} do Drive..."
 
-          rm -f plugins/SkinsRestorer*.jar
-          rm -rf plugins/SkinsRestorer
+            if python3 -m gdown \
+              --fuzzy "https://drive.google.com/file/d/${file_id}/view" \
+              -O "$target"; then
 
-          # Remove pastas extras depois de copiar os JARs.
-          rm -rf plugins/plugins plugins/Plugins
+              if unzip -t "$target" >/dev/null 2>&1; then
+                mkdir -p "minecraft/${world_name}"
+                unzip -q "$target" -d "minecraft/${world_name}"
 
-          # Evita duplicidade com a versão antiga conhecida.
-          rm -f plugins/EssentialsX-2.22.0.jar
+                # Se o ZIP tiver uma pasta com o mesmo nome dentro,
+                # move o conteúdo para o local esperado.
+                if [ -d "minecraft/${world_name}/${world_name}" ]; then
+                  cp -a "minecraft/${world_name}/${world_name}/." \
+                    "minecraft/${world_name}/"
+                  rm -rf "minecraft/${world_name}/${world_name}"
+                fi
 
-          rm -rf plugins_temp
-          rm -f plugins.zip
-
-          echo "JARs na raiz de plugins:"
-          find plugins -maxdepth 1 -type f -name '*.jar' \
-            -printf '%f\n' | sort
-
-          PLUGIN_COUNT=$(find plugins -maxdepth 1 -type f -name '*.jar' | wc -l)
-
-          if [ "$PLUGIN_COUNT" -eq 0 ]; then
-            echo "ERRO: nenhum arquivo JAR foi encontrado."
-            find plugins -maxdepth 4 -print
-            exit 1
-          fi
-
-          echo "Total de JARs: $PLUGIN_COUNT"
-          du -sh plugins
-
-      # ============================================================
-      # CONFIGURAÇÕES DO ATERNOS
-      # ============================================================
-      - name: Instalar configurações do Aternos
-        run: |
-          set -euo pipefail
-
-          CONFIG_ARCHIVE_ID="1SuYS0eR0qjTvEH5FaUZuv0lApttcQ3hG"
-
-          mkdir -p config_aternos_tmp minecraft
-
-          gdown \
-            "https://drive.google.com/uc?id=${CONFIG_ARCHIVE_ID}" \
-            -O config_aternos_tmp/configuracoes-aternos.zip
-
-          unzip -t config_aternos_tmp/configuracoes-aternos.zip
-
-          unzip -q config_aternos_tmp/configuracoes-aternos.zip \
-            -d config_aternos_tmp/extracted
-
-          OPS_FILE="$(find config_aternos_tmp/extracted \
-            -type f -name 'ops.json' -print -quit)"
-
-          if [ -z "$OPS_FILE" ]; then
-            echo "ERRO: ops.json não encontrado no ZIP."
-            exit 1
-          fi
-
-          CONFIG_ROOT="$(dirname "$OPS_FILE")"
-
-          if [ ! -f "$CONFIG_ROOT/server.properties" ]; then
-            echo "ERRO: server.properties não encontrado junto de ops.json."
-            exit 1
-          fi
-
-          for file in \
-            banned-ips.json banned-players.json bukkit.yml \
-            commands.yml help.yml ops.json server.properties \
-            spigot.yml whitelist.json; do
-            if [ -f "$CONFIG_ROOT/$file" ]; then
-              cp "$CONFIG_ROOT/$file" minecraft/
-              echo "Instalado: $file"
-            fi
-          done
-
-          if [ -d "$CONFIG_ROOT/config" ]; then
-            rm -rf minecraft/config
-            cp -a "$CONFIG_ROOT/config" minecraft/config
-          fi
-
-          # Mantém online-mode=false para a configuração atual.
-          if grep -qE '^[[:space:]]*online-mode=' minecraft/server.properties; then
-            sed -i -E 's/^[[:space:]]*online-mode=.*/online-mode=false/' \
-              minecraft/server.properties
-          else
-            echo 'online-mode=false' >> minecraft/server.properties
-          fi
-
-          # Preserva os outros operadores e garante o OP configurado.
-          jq --arg uuid "aa1e9712-b2a7-32d4-95cf-4cd92133b658" \
-             --arg name "AgenteFox4" '
-            if any(.[]; ((.uuid // "") | ascii_downcase) == ($uuid | ascii_downcase)) then
-              map(if ((.uuid // "") | ascii_downcase) == ($uuid | ascii_downcase)
-                  then .name = $name | .level = 4
-                  else . end)
+                echo "Mundo ${world_name} recuperado."
+              else
+                echo "AVISO: o arquivo de ${world_name} não é um ZIP válido."
+                rm -rf "minecraft/${world_name}"
+              fi
             else
-              . + [{"uuid": $uuid, "name": $name, "level": 4,
-                    "bypassesPlayerLimit": false}]
-            end
-          ' minecraft/ops.json > minecraft/ops.json.tmp
+              echo "AVISO: não foi possível baixar ${world_name}."
+              echo "Verifique se o arquivo do Drive está compartilhado."
+            fi
+          }
 
-          mv minecraft/ops.json.tmp minecraft/ops.json
+          download_world "world" \
+            "1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-"
 
-          jq -e 'any(.[]; ((.uuid // "") | ascii_downcase) ==
-            "aa1e9712-b2a7-32d4-95cf-4cd92133b658" and .level == 4)' \
-            minecraft/ops.json > /dev/null
+          download_world "world_nether" \
+            "1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM"
 
-          grep -E '^[[:space:]]*online-mode=' minecraft/server.properties
+          download_world "world_the_end" \
+            "1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt"
 
-          rm -rf config_aternos_tmp
-
-      # ============================================================
-      # RELATÓRIO DOS NOMES INTERNOS DOS PLUGINS
-      # ============================================================
-      - name: Verificar nomes internos dos plugins
+      - name: Baixar Paper 1.21.11
+        shell: bash
         run: |
           set -euo pipefail
+
           cd minecraft
 
-          mkdir -p diagnostico
+          PAPER_URL="https://api.papermc.io/v2/projects/paper/versions/1.21.11/builds/132/downloads/paper-1.21.11-132.jar"
 
-          REPORT="diagnostico/plugins-internos.txt"
+          curl -fL --retry 3 --retry-delay 2 \
+            "$PAPER_URL" -o paper.jar
+
+          test -s paper.jar
+
+          echo "eula=true" > eula.txt
+
+          # Mantém o comportamento de autenticação já usado no servidor.
+          if [ -f server.properties ]; then
+            sed -i 's/^online-mode=.*/online-mode=false/' server.properties
+          else
+            echo "online-mode=false" > server.properties
+          fi
+
+          touch server.properties
+          grep -q '^online-mode=' server.properties || \
+            echo "online-mode=false" >> server.properties
+
+          # Mantém o operador já utilizado no servidor.
+          if [ ! -f ops.json ]; then
+            echo '[]' > ops.json
+          fi
+
+          if ! jq -e '.[] | select(.name == "AgenteFox4")' \
+            ops.json >/dev/null 2>&1; then
+            jq '. += [{
+              "uuid":"aa1e9712-b2a7-32d4-95cf-4cd92133b658",
+              "name":"AgenteFox4",
+              "level":4,
+              "bypassesPlayerLimit":true
+            }]' ops.json > /tmp/ops.json
+            mv /tmp/ops.json ops.json
+          fi
+
+      - name: Baixar plugins individualmente
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          PLUGINS_DIR="$GITHUB_WORKSPACE/minecraft/plugins"
+          REPORT="$GITHUB_WORKSPACE/minecraft/diagnostico/downloads-plugins.txt"
+
+          mkdir -p "$PLUGINS_DIR"
           : > "$REPORT"
 
-          echo "=== ARQUIVOS JAR ===" | tee -a "$REPORT"
-
-          find plugins -maxdepth 1 -type f -name '*.jar' \
-            -printf '%f\n' | sort | tee -a "$REPORT"
-
+          echo "Downloads individuais de plugins" | tee -a "$REPORT"
+          echo "Minecraft/Paper: 1.21.11" | tee -a "$REPORT"
+          echo "Data: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" | tee -a "$REPORT"
           echo "" | tee -a "$REPORT"
-          echo "=== PLUGINS E DEPENDÊNCIAS DECLARADAS ===" | tee -a "$REPORT"
 
-          for jar in plugins/*.jar; do
+          # Baixa uma versão de lançamento hospedada no Modrinth.
+          # O projeto precisa publicar versões para Bukkit/Spigot/Paper
+          # e indicar compatibilidade com alguma versão 1.21.x.
+          download_modrinth() {
+            local slug="$1"
+            local filename="$2"
+            local destination="$PLUGINS_DIR/$filename"
+            local json url
+
+            echo "Tentando Modrinth: $filename"
+
+            json="$(curl -fsSL --retry 2 \
+              -H 'User-Agent: OdisseiaMinecraftServer/1.0 (GitHub Actions)' \
+              "https://api.modrinth.com/v2/project/${slug}/version" \
+              2>/dev/null)" || {
+                echo "PENDENTE: $filename — projeto não acessível pelo Modrinth." \
+                  | tee -a "$REPORT"
+                return 1
+              }
+
+            url="$(printf '%s' "$json" | jq -r '
+              [
+                .[]
+                | select(.version_type == "release")
+                | select(any(.game_versions[]?; startswith("1.21")))
+                | select(any(.loaders[]?;
+                    . == "paper" or . == "spigot" or . == "bukkit"))
+              ]
+              | sort_by(.date_published)
+              | last
+              | (
+                  [.files[]? | select(.primary == true) | .url][0]
+                  // .files[0].url
+                  // empty
+                )
+            ' 2>/dev/null)"
+
+            if [ -z "$url" ] || [ "$url" = "null" ]; then
+              echo "PENDENTE: $filename — nenhuma versão compatível localizada." \
+                | tee -a "$REPORT"
+              return 1
+            fi
+
+            if curl -fL --retry 2 --retry-delay 2 \
+              "$url" -o "${destination}.download"; then
+
+              if file "${destination}.download" | grep -qi 'Java archive\|Zip archive'; then
+                mv "${destination}.download" "$destination"
+                echo "OK: $filename — baixado do Modrinth." \
+                  | tee -a "$REPORT"
+                return 0
+              fi
+            fi
+
+            rm -f "${destination}.download"
+            echo "PENDENTE: $filename — falha ao validar o arquivo." \
+              | tee -a "$REPORT"
+            return 1
+          }
+
+          # Endpoints oficiais de build do GeyserMC.
+          download_direct() {
+            local filename="$1"
+            local url="$2"
+            local destination="$PLUGINS_DIR/$filename"
+
+            echo "Tentando download oficial: $filename"
+
+            if curl -fL --retry 3 --retry-delay 2 \
+              "$url" -o "${destination}.download"; then
+
+              if file "${destination}.download" | grep -qi 'Java archive\|Zip archive'; then
+                mv "${destination}.download" "$destination"
+                echo "OK: $filename — baixado da fonte oficial." \
+                  | tee -a "$REPORT"
+                return 0
+              fi
+            fi
+
+            rm -f "${destination}.download"
+            echo "PENDENTE: $filename — download oficial falhou." \
+              | tee -a "$REPORT"
+            return 1
+          }
+
+          # Geyser e Floodgate: endpoints oficiais.
+          download_direct "Geyser-Spigot.jar" \
+            "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot" || true
+
+          download_direct "floodgate-spigot.jar" \
+            "https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot" || true
+
+          # Plugins distribuídos no Modrinth.
+          # Se algum slug não existir ou não tiver uma versão 1.21.x,
+          # o relatório mostrará o item como pendente.
+          download_modrinth "luckperms" \
+            "LuckPerms-Bukkit.jar" || true
+
+          download_modrinth "placeholderapi" \
+            "PlaceholderAPI.jar" || true
+
+          download_modrinth "worldedit" \
+            "worldedit-bukkit.jar" || true
+
+          download_modrinth "viaversion" \
+            "ViaVersion.jar" || true
+
+          download_modrinth "simple-voice-chat" \
+            "voicechat-bukkit.jar" || true
+
+          download_modrinth "essentialsx" \
+            "EssentialsX.jar" || true
+
+          download_modrinth "deluxemenus" \
+            "DeluxeMenus.jar" || true
+
+          download_modrinth "dropheads" \
+            "DropHeads.jar" || true
+
+          download_modrinth "economyshopgui" \
+            "EconomyShopGUI.jar" || true
+
+          download_modrinth "executableitems" \
+            "ExecutableItems.jar" || true
+
+          download_modrinth "itemedit" \
+            "ItemEdit.jar" || true
+
+          download_modrinth "minepacks" \
+            "Minepacks.jar" || true
+
+          download_modrinth "notquests" \
+            "NotQuests.jar" || true
+
+          download_modrinth "shopkeepers" \
+            "Shopkeepers.jar" || true
+
+          download_modrinth "skinsrestorer" \
+            "SkinsRestorer.jar" || true
+
+          download_modrinth "tab" \
+            "TAB.jar" || true
+
+          download_modrinth "vault" \
+            "Vault.jar" || true
+
+          # Alguns plugins da lista não têm um endpoint público e estável
+          # que possa ser confirmado sem login ou acesso à conta.
+          # Não apagamos os arquivos existentes restaurados do backup.
+          {
+            echo ""
+            echo "PLUGINS QUE PRECISAM DE VERIFICAÇÃO DE FONTE"
+            echo "Os itens abaixo não têm download automatizado confirmado neste workflow:"
+            echo "- attributeswapfixer-1.0.jar"
+            echo "- AuctionHouse-1.5.4.jar"
+            echo "- AxShulkers-1.23.3.jar"
+            echo "- CommandPanels.jar"
+            echo "- ItemEditor.jar"
+            echo "- ItemTag-3.7.7.jar"
+            echo "- OpenShulker-1.3.0.jar"
+            echo "- orbitalstrike-1.6.8.jar"
+            echo "- SCore-5.26.8.10.jar"
+            echo ""
+            echo "Se esses arquivos já existiam no backup restaurado, eles foram preservados."
+            echo "Nenhum arquivo do backup foi removido por este passo."
+          } | tee -a "$REPORT"
+
+          echo ""
+          echo "Relatório salvo em: $REPORT"
+          echo "Downloads individuais concluídos; consulte os itens pendentes no relatório."
+
+      - name: Verificar plugins e gerar diagnóstico
+        shell: bash
+        run: |
+          set -u
+
+          PLUGINS_DIR="minecraft/plugins"
+          REPORT="minecraft/diagnostico/plugins-internos.txt"
+
+          mkdir -p "$(dirname "$REPORT")"
+          : > "$REPORT"
+
+          echo "JARs encontrados em plugins/" >> "$REPORT"
+          echo "Data: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$REPORT"
+          echo "" >> "$REPORT"
+
+          find "$PLUGINS_DIR" -maxdepth 1 -type f -name '*.jar' -print \
+            | sort >> "$REPORT"
+
+          echo "" >> "$REPORT"
+          echo "Metadados plugin.yml / paper-plugin.yml" >> "$REPORT"
+
+          for jar in "$PLUGINS_DIR"/*.jar; do
             [ -f "$jar" ] || continue
 
-            echo "" | tee -a "$REPORT"
-            echo "--- $jar ---" | tee -a "$REPORT"
+            echo "" >> "$REPORT"
+            echo "===== $(basename "$jar") =====" >> "$REPORT"
 
-            if unzip -Z1 "$jar" 2>/dev/null | grep -qx 'plugin.yml'; then
-              unzip -p "$jar" plugin.yml 2>/dev/null |
-                grep -E '^(name|version|main|depend|softdepend|loadbefore|api-version):' |
-                tee -a "$REPORT" || true
-            elif unzip -Z1 "$jar" 2>/dev/null | grep -qx 'paper-plugin.yml'; then
-              unzip -p "$jar" paper-plugin.yml 2>/dev/null |
-                grep -E '^(name|version|main|api-version):' |
-                tee -a "$REPORT" || true
-              echo "Descritor paper-plugin.yml encontrado." | tee -a "$REPORT"
+            if unzip -p "$jar" plugin.yml 2>/dev/null \
+              | sed -n '1,35p' >> "$REPORT"; then
+              :
             else
-              echo "Nenhum plugin.yml ou paper-plugin.yml na raiz do JAR." |
-                tee -a "$REPORT"
+              unzip -p "$jar" paper-plugin.yml 2>/dev/null \
+                | sed -n '1,35p' >> "$REPORT" || true
             fi
           done
 
-          echo ""
-          echo "Relatório criado em $REPORT"
-          cat "$REPORT"
+          echo "Diagnóstico criado."
 
-      # ============================================================
-      # PLAYIT
-      # ============================================================
-      - name: Iniciar Playit
-        env:
-          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
-        run: |
-          set -euo pipefail
-
-          docker rm -f playit 2>/dev/null || true
-
-          docker run \
-            -d \
-            --name playit \
-            --network host \
-            --restart unless-stopped \
-            -e SECRET_KEY="$PLAYIT_SECRET" \
-            ghcr.io/playit-cloud/playit-agent:latest
-
-          sleep 10
-          docker logs playit
-
-      - name: Verificar Playit
-        run: |
-          docker ps --filter "name=playit"
-          docker logs --tail 50 playit
-
-      # ============================================================
-      # VERIFICAÇÃO FINAL
-      # ============================================================
-      - name: Verificar plugins antes de iniciar
-        run: |
-          set -euo pipefail
-          cd minecraft
-
-          echo "Plugins instalados:"
-          find plugins -maxdepth 1 -type f -name '*.jar' \
-            -printf '%f\n' | sort
-
-          echo ""
-          echo "Verificando possíveis duplicidades do EssentialsX:"
-          find plugins -maxdepth 1 -type f \
-            -iname 'EssentialsX*.jar' -printf '%f\n' | sort
-
-          PLUGIN_COUNT=$(find plugins -maxdepth 1 -type f -name '*.jar' | wc -l)
-
-          if [ "$PLUGIN_COUNT" -eq 0 ]; then
-            echo "ERRO: nenhum plugin instalado."
-            exit 1
-          fi
-
-          echo "Total de JARs: $PLUGIN_COUNT"
-
-      # ============================================================
-      # INICIAR MINECRAFT E FAZER BACKUPS
-      # ============================================================
-      - name: Iniciar Minecraft e fazer backups periódicos
+      - name: Iniciar servidor e fazer backups periódicos
+        shell: bash
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           set -euo pipefail
+
           cd minecraft
 
-          java -version
-          ls -lh paper.jar
-          du -sh world world_nether world_the_end
+          backup_server() {
+            local archive="/tmp/server-backup.tar.gz"
 
-          cat > /tmp/minecraft_session.py <<'PY'
-          import os
-          import subprocess
-          import time
-          import tarfile
-          from pathlib import Path
+            echo "Criando backup em $(date -u '+%Y-%m-%d %H:%M:%S UTC')..."
 
-          folder_id = os.environ["GDRIVE_FOLDER_ID"]
-          root = Path.cwd()
-          archive = Path("/tmp/server-backup-latest.tar.gz")
-          log_path = root / "server.log"
+            tar -czf "$archive" \
+              --exclude='./server.log' \
+              --exclude='./diagnostico' \
+              -C "$GITHUB_WORKSPACE/minecraft" .
 
-          max_session_seconds = 5 * 60 * 60 + 25 * 60
-          backup_interval_seconds = 10 * 60
+            # Preserva o backup anterior antes de atualizar o mais recente.
+            rclone copyto \
+              "gdrive2:server-backup-latest.tar.gz" \
+              "gdrive2:server-backup-previous.tar.gz" || true
 
-          with log_path.open("a", buffering=1) as log:
-              server = subprocess.Popen(
-                  ["java", "-Xms2G", "-Xmx8G", "-jar", "paper.jar", "nogui"],
-                  stdin=subprocess.PIPE,
-                  stdout=log,
-                  stderr=subprocess.STDOUT,
-                  text=True,
-                  bufsize=1,
-              )
+            rclone copyto "$archive" \
+              "gdrive2:server-backup-latest.tar.gz"
 
-              def command(text):
-                  if server.poll() is None and server.stdin:
-                      server.stdin.write(text + "\n")
-                      server.stdin.flush()
+            echo "Backup enviado ao Google Drive."
+          }
 
-              def make_backup(label):
-                  print(f"Iniciando backup ({label})...", flush=True)
+          echo "Iniciando Paper 1.21.11..."
+          java -Xms2G -Xmx8G -jar paper.jar nogui \
+            > server.log 2>&1 &
+          SERVER_PID=$!
 
-                  command("save-all flush")
-                  time.sleep(5)
-                  command("save-off")
-                  time.sleep(2)
+          # Primeiro backup após dois minutos para dar tempo de salvar dados.
+          sleep 120
 
-                  try:
-                      members = [
-                          name for name in [
-                              "world", "world_nether", "world_the_end", "plugins",
-                              "server.properties", "ops.json", "whitelist.json",
-                              "banned-players.json", "banned-ips.json", "usercache.json"
-                          ] if (root / name).exists()
-                      ]
+          if kill -0 "$SERVER_PID" 2>/dev/null; then
+            backup_server
+          else
+            echo "O servidor encerrou antes do primeiro backup."
+            tail -n 150 server.log || true
+            exit 1
+          fi
 
-                      required = ["world", "world_nether", "world_the_end"]
+          # Backups periódicos a cada 10 minutos.
+          for i in $(seq 1 32); do
+            sleep 600
 
-                      if not all((root / name).exists() for name in required):
-                          raise RuntimeError(
-                              "Um ou mais mundos não foram encontrados; backup cancelado."
-                          )
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "O servidor encerrou; interrompendo o ciclo."
+              break
+            fi
 
-                      with tarfile.open(archive, "w:gz") as tar:
-                          for name in members:
-                              tar.add(root / name, arcname=name, recursive=True)
+            backup_server
+          done
 
-                      # Preserva a cópia anterior antes de atualizar a atual.
-                      subprocess.run([
-                          "rclone", "copyto",
-                          "gdrive2:server-backup-latest.tar.gz",
-                          "gdrive2:server-backup-previous.tar.gz",
-                          "--drive-root-folder-id", folder_id
-                      ], check=False, stdout=log, stderr=subprocess.STDOUT)
+          # Completa aproximadamente 5h25 de sessão.
+          if kill -0 "$SERVER_PID" 2>/dev/null; then
+            sleep 180
+          fi
 
-                      subprocess.run([
-                          "rclone", "copyto", str(archive),
-                          "gdrive2:server-backup-latest.tar.gz",
-                          "--drive-root-folder-id", folder_id
-                      ], check=True, stdout=log, stderr=subprocess.STDOUT)
+          echo "Encerrando o servidor..."
+          kill -TERM "$SERVER_PID" 2>/dev/null || true
 
-                      print(f"Backup enviado ao Google Drive ({label}).", flush=True)
+          for i in $(seq 1 30); do
+            kill -0 "$SERVER_PID" 2>/dev/null || break
+            sleep 2
+          done
 
-                  finally:
-                      command("save-on")
+          kill -KILL "$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
 
-              started = time.monotonic()
-              next_backup = started + 120
+          # Backup final após o encerramento do servidor.
+          backup_server
 
-              print(
-                  "Servidor iniciado. Primeiro backup em 2 minutos; "
-                  "depois, a cada 10 minutos.",
-                  flush=True
-              )
+          echo "Sessão concluída."
 
-              try:
-                  while server.poll() is None:
-                      now = time.monotonic()
-
-                      if now >= started + max_session_seconds:
-                          print("Limite de sessão atingido.", flush=True)
-                          break
-
-                      if now >= next_backup:
-                          make_backup("periódico")
-                          next_backup = time.monotonic() + backup_interval_seconds
-
-                      time.sleep(5)
-
-                  if server.poll() is None:
-                      make_backup("final")
-                      command("stop")
-
-                      try:
-                          server.wait(timeout=90)
-                      except subprocess.TimeoutExpired:
-                          server.terminate()
-
-                          try:
-                              server.wait(timeout=15)
-                          except subprocess.TimeoutExpired:
-                              server.kill()
-                              server.wait()
-                  else:
-                      print(
-                          f"Servidor encerrou com código {server.returncode}.",
-                          flush=True
-                      )
-
-              except Exception:
-                  print(
-                      "ERRO durante a sessão/backup; tentando encerrar com segurança.",
-                      flush=True
-                  )
-
-                  if server.poll() is None:
-                      command("save-all flush")
-                      time.sleep(5)
-                      command("stop")
-
-                      try:
-                          server.wait(timeout=60)
-                      except subprocess.TimeoutExpired:
-                          server.terminate()
-
-                          try:
-                              server.wait(timeout=15)
-                          except subprocess.TimeoutExpired:
-                              server.kill()
-                              server.wait()
-
-                  raise
-
-              if server.returncode not in (0, None):
-                  raise SystemExit(server.returncode)
-          PY
-
-          touch server.log
-          tail -n +1 -F server.log &
-          TAIL_PID=$!
-
-          set +e
-          python3 /tmp/minecraft_session.py
-          RESULT=$?
-          set -e
-
-          kill "$TAIL_PID" 2>/dev/null || true
-
-          echo ""
-          echo "=== ERROS E AVISOS DE PLUGINS ==="
-
-          grep -Ein \
-            'Minepacks|CommandPanels|PCGF_PluginLib|PluginsLib|Could not load|Failed to load|NoClassDefFoundError|ClassNotFoundException|UnsupportedClassVersionError|ERROR|Exception|Enabling .* v|Disabling .* v' \
-            server.log | tail -n 300 || true
-
-          exit "$RESULT"
-
-      # ============================================================
-      # DISPONIBILIZAR DIAGNÓSTICO
-      # ============================================================
-      - name: Disponibilizar logs e relatório
+      - name: Publicar diagnóstico
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: minecraft-diagnostico
           path: |
             minecraft/server.log
-            minecraft/diagnostico/plugins-internos.txt
+            minecraft/diagnostico/
           if-no-files-found: warn
           retention-days: 3
-
-      # ============================================================
-      # LOGS FINAIS DO PLAYIT
-      # ============================================================
-      - name: Mostrar logs do Playit
-        if: always()
-        run: |
-          echo "Logs finais do Playit:"
-          docker logs playit || true
-
