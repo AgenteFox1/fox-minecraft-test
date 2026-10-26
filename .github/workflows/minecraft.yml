@@ -1,4 +1,4 @@
-```yaml
+
 name: Minecraft Test
 
 on:
@@ -595,4 +595,4 @@ jobs:
         run: |
           echo "Logs finais do Playit:"
           docker logs playit || true
-```
+
