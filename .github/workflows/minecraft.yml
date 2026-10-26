@@ -1,4 +1,4 @@
-# .github/workflows/minecraft.yml
+
 name: Minecraft Test
 
 on:
@@ -8,484 +8,405 @@ permissions:
   contents: read
 
 jobs:
-  server:
+  minecraft:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
     steps:
       - name: Preparar ambiente
-        shell: bash
         run: |
-          set -e
           sudo apt-get update
-          sudo apt-get install -y curl jq unzip tar gzip
-          sudo apt-get install -y openjdk-21-jre-headless
-          sudo apt-get install -y rclone
-          python3 -m pip install --user --break-system-packages gdown
+          sudo apt-get install -y curl jq unzip tar gzip file coreutils python3-pip
 
-          mkdir -p minecraft/plugins minecraft/diagnostico
-          mkdir -p "$HOME/.config/rclone"
+      - name: Instalar Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
 
-      - name: Configurar Google Drive
-        shell: bash
+      - name: Instalar ferramentas auxiliares
+        run: |
+          python3 -m pip install --break-system-packages gdown
+
+      - name: Configurar Google Drive sem autenticação interativa
         env:
           RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        shell: bash
         run: |
           set -euo pipefail
 
-          if [ -z "$RCLONE_CONFIG_B64" ]; then
-            echo "ERRO: o secret RCLONE_CONFIG_B64 não está configurado."
+          if [ -z "${RCLONE_CONFIG_B64:-}" ]; then
+            echo "::error::O segredo RCLONE_CONFIG_B64 não está configurado."
             exit 1
           fi
 
-          if [ -z "$GDRIVE_FOLDER_ID" ]; then
-            echo "ERRO: o secret GDRIVE_FOLDER_ID não está configurado."
+          if [ -z "${GDRIVE_FOLDER_ID:-}" ]; then
+            echo "::error::O segredo GDRIVE_FOLDER_ID não está configurado."
             exit 1
           fi
 
-          echo "$RCLONE_CONFIG_B64" | base64 -d \
-            > "$HOME/.config/rclone/rclone.conf"
+          mkdir -p "$HOME/.config/rclone"
+
+          printf '%s' "$RCLONE_CONFIG_B64" \
+            | base64 --decode > "$HOME/.config/rclone/rclone.conf"
 
           chmod 600 "$HOME/.config/rclone/rclone.conf"
 
-          # O remote gdrive2 deve estar definido no arquivo do rclone.
-          # O ID informado passa a ser a pasta-raiz usada para os backups.
-          rclone config update gdrive2 root_folder_id "$GDRIVE_FOLDER_ID"
-
-          rclone listremotes
-
-      - name: Restaurar último backup do servidor
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p minecraft
-          echo "Procurando o backup mais recente no Google Drive..."
-
-          if rclone copyto \
-            "gdrive2:server-backup-latest.tar.gz" \
-            /tmp/server-backup-latest.tar.gz; then
-
-            echo "Backup encontrado. Validando arquivo..."
-            tar -tzf /tmp/server-backup-latest.tar.gz >/dev/null
-
-            tar -xzf /tmp/server-backup-latest.tar.gz \
-              -C minecraft
-
-            echo "Backup restaurado."
-          else
-            echo "Não foi encontrado um backup anterior."
-            echo "O workflow tentará recuperar os mundos pelos arquivos individuais."
+          if ! rclone listremotes | grep -qx 'gdrive2:'; then
+            echo "::error::O arquivo rclone.conf não contém o remote gdrive2."
+            exit 1
           fi
 
-      - name: Recuperar mundos que ainda não existem
-        shell: bash
-        run: |
-          set -euo pipefail
+          # Define a pasta do Drive por variável de ambiente.
+          # Não executa 'rclone config update', que pode abrir autenticação.
+          export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
 
-          download_world() {
-            local world_name="$1"
-            local file_id="$2"
-            local target="/tmp/${world_name}.zip"
+          echo "Verificando acesso ao Google Drive..."
 
-            if [ -d "minecraft/${world_name}" ]; then
-              echo "Mundo ${world_name} já existe; não será sobrescrito."
-              return 0
-            fi
+          if ! timeout 30s rclone lsf gdrive2: --max-depth 1 >/dev/null; then
+            echo "::error::Não foi possível acessar o Google Drive. O token OAuth do RCLONE_CONFIG_B64 pode estar inválido ou expirado. Atualize o segredo com um rclone.conf autorizado."
+            exit 1
+          fi
 
-            echo "Tentando recuperar o mundo ${world_name} do Drive..."
-
-            if python3 -m gdown \
-              --fuzzy "https://drive.google.com/file/d/${file_id}/view" \
-              -O "$target"; then
-
-              if unzip -t "$target" >/dev/null 2>&1; then
-                mkdir -p "minecraft/${world_name}"
-                unzip -q "$target" -d "minecraft/${world_name}"
-
-                # Se o ZIP tiver uma pasta com o mesmo nome dentro,
-                # move o conteúdo para o local esperado.
-                if [ -d "minecraft/${world_name}/${world_name}" ]; then
-                  cp -a "minecraft/${world_name}/${world_name}/." \
-                    "minecraft/${world_name}/"
-                  rm -rf "minecraft/${world_name}/${world_name}"
-                fi
-
-                echo "Mundo ${world_name} recuperado."
-              else
-                echo "AVISO: o arquivo de ${world_name} não é um ZIP válido."
-                rm -rf "minecraft/${world_name}"
-              fi
-            else
-              echo "AVISO: não foi possível baixar ${world_name}."
-              echo "Verifique se o arquivo do Drive está compartilhado."
-            fi
-          }
-
-          download_world "world" \
-            "1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-"
-
-          download_world "world_nether" \
-            "1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM"
-
-          download_world "world_the_end" \
-            "1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt"
+          echo "Conexão com o Google Drive verificada."
 
       - name: Baixar Paper 1.21.11
         shell: bash
         run: |
           set -euo pipefail
 
+          mkdir -p minecraft
           cd minecraft
 
-          PAPER_URL="https://api.papermc.io/v2/projects/paper/versions/1.21.11/builds/132/downloads/paper-1.21.11-132.jar"
+          BUILD="132"
+          URL="https://api.papermc.io/v2/projects/paper/versions/1.21.11/builds/${BUILD}/downloads/paper-1.21.11-${BUILD}.jar"
 
-          curl -fL --retry 3 --retry-delay 2 \
-            "$PAPER_URL" -o paper.jar
+          curl -fL --retry 3 --retry-delay 2 "$URL" -o paper.jar
 
-          test -s paper.jar
-
-          echo "eula=true" > eula.txt
-
-          # Mantém o comportamento de autenticação já usado no servidor.
-          if [ -f server.properties ]; then
-            sed -i 's/^online-mode=.*/online-mode=false/' server.properties
-          else
-            echo "online-mode=false" > server.properties
+          if ! file paper.jar | grep -qi 'Java archive'; then
+            echo "::error::O arquivo do Paper baixado não parece ser um JAR válido."
+            exit 1
           fi
 
-          touch server.properties
-          grep -q '^online-mode=' server.properties || \
-            echo "online-mode=false" >> server.properties
-
-          # Mantém o operador já utilizado no servidor.
-          if [ ! -f ops.json ]; then
-            echo '[]' > ops.json
-          fi
-
-          if ! jq -e '.[] | select(.name == "AgenteFox4")' \
-            ops.json >/dev/null 2>&1; then
-            jq '. += [{
-              "uuid":"aa1e9712-b2a7-32d4-95cf-4cd92133b658",
-              "name":"AgenteFox4",
-              "level":4,
-              "bypassesPlayerLimit":true
-            }]' ops.json > /tmp/ops.json
-            mv /tmp/ops.json ops.json
-          fi
-
-      - name: Baixar plugins individualmente
-        shell: bash
-        run: |
-          set -uo pipefail
-
-          PLUGINS_DIR="$GITHUB_WORKSPACE/minecraft/plugins"
-          REPORT="$GITHUB_WORKSPACE/minecraft/diagnostico/downloads-plugins.txt"
-
-          mkdir -p "$PLUGINS_DIR"
-          : > "$REPORT"
-
-          echo "Downloads individuais de plugins" | tee -a "$REPORT"
-          echo "Minecraft/Paper: 1.21.11" | tee -a "$REPORT"
-          echo "Data: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" | tee -a "$REPORT"
-          echo "" | tee -a "$REPORT"
-
-          # Baixa uma versão de lançamento hospedada no Modrinth.
-          # O projeto precisa publicar versões para Bukkit/Spigot/Paper
-          # e indicar compatibilidade com alguma versão 1.21.x.
-          download_modrinth() {
-            local slug="$1"
-            local filename="$2"
-            local destination="$PLUGINS_DIR/$filename"
-            local json url
-
-            echo "Tentando Modrinth: $filename"
-
-            json="$(curl -fsSL --retry 2 \
-              -H 'User-Agent: OdisseiaMinecraftServer/1.0 (GitHub Actions)' \
-              "https://api.modrinth.com/v2/project/${slug}/version" \
-              2>/dev/null)" || {
-                echo "PENDENTE: $filename — projeto não acessível pelo Modrinth." \
-                  | tee -a "$REPORT"
-                return 1
-              }
-
-            url="$(printf '%s' "$json" | jq -r '
-              [
-                .[]
-                | select(.version_type == "release")
-                | select(any(.game_versions[]?; startswith("1.21")))
-                | select(any(.loaders[]?;
-                    . == "paper" or . == "spigot" or . == "bukkit"))
-              ]
-              | sort_by(.date_published)
-              | last
-              | (
-                  [.files[]? | select(.primary == true) | .url][0]
-                  // .files[0].url
-                  // empty
-                )
-            ' 2>/dev/null)"
-
-            if [ -z "$url" ] || [ "$url" = "null" ]; then
-              echo "PENDENTE: $filename — nenhuma versão compatível localizada." \
-                | tee -a "$REPORT"
-              return 1
-            fi
-
-            if curl -fL --retry 2 --retry-delay 2 \
-              "$url" -o "${destination}.download"; then
-
-              if file "${destination}.download" | grep -qi 'Java archive\|Zip archive'; then
-                mv "${destination}.download" "$destination"
-                echo "OK: $filename — baixado do Modrinth." \
-                  | tee -a "$REPORT"
-                return 0
-              fi
-            fi
-
-            rm -f "${destination}.download"
-            echo "PENDENTE: $filename — falha ao validar o arquivo." \
-              | tee -a "$REPORT"
-            return 1
-          }
-
-          # Endpoints oficiais de build do GeyserMC.
-          download_direct() {
-            local filename="$1"
-            local url="$2"
-            local destination="$PLUGINS_DIR/$filename"
-
-            echo "Tentando download oficial: $filename"
-
-            if curl -fL --retry 3 --retry-delay 2 \
-              "$url" -o "${destination}.download"; then
-
-              if file "${destination}.download" | grep -qi 'Java archive\|Zip archive'; then
-                mv "${destination}.download" "$destination"
-                echo "OK: $filename — baixado da fonte oficial." \
-                  | tee -a "$REPORT"
-                return 0
-              fi
-            fi
-
-            rm -f "${destination}.download"
-            echo "PENDENTE: $filename — download oficial falhou." \
-              | tee -a "$REPORT"
-            return 1
-          }
-
-          # Geyser e Floodgate: endpoints oficiais.
-          download_direct "Geyser-Spigot.jar" \
-            "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot" || true
-
-          download_direct "floodgate-spigot.jar" \
-            "https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot" || true
-
-          # Plugins distribuídos no Modrinth.
-          # Se algum slug não existir ou não tiver uma versão 1.21.x,
-          # o relatório mostrará o item como pendente.
-          download_modrinth "luckperms" \
-            "LuckPerms-Bukkit.jar" || true
-
-          download_modrinth "placeholderapi" \
-            "PlaceholderAPI.jar" || true
-
-          download_modrinth "worldedit" \
-            "worldedit-bukkit.jar" || true
-
-          download_modrinth "viaversion" \
-            "ViaVersion.jar" || true
-
-          download_modrinth "simple-voice-chat" \
-            "voicechat-bukkit.jar" || true
-
-          download_modrinth "essentialsx" \
-            "EssentialsX.jar" || true
-
-          download_modrinth "deluxemenus" \
-            "DeluxeMenus.jar" || true
-
-          download_modrinth "dropheads" \
-            "DropHeads.jar" || true
-
-          download_modrinth "economyshopgui" \
-            "EconomyShopGUI.jar" || true
-
-          download_modrinth "executableitems" \
-            "ExecutableItems.jar" || true
-
-          download_modrinth "itemedit" \
-            "ItemEdit.jar" || true
-
-          download_modrinth "minepacks" \
-            "Minepacks.jar" || true
-
-          download_modrinth "notquests" \
-            "NotQuests.jar" || true
-
-          download_modrinth "shopkeepers" \
-            "Shopkeepers.jar" || true
-
-          download_modrinth "skinsrestorer" \
-            "SkinsRestorer.jar" || true
-
-          download_modrinth "tab" \
-            "TAB.jar" || true
-
-          download_modrinth "vault" \
-            "Vault.jar" || true
-
-          # Alguns plugins da lista não têm um endpoint público e estável
-          # que possa ser confirmado sem login ou acesso à conta.
-          # Não apagamos os arquivos existentes restaurados do backup.
-          {
-            echo ""
-            echo "PLUGINS QUE PRECISAM DE VERIFICAÇÃO DE FONTE"
-            echo "Os itens abaixo não têm download automatizado confirmado neste workflow:"
-            echo "- attributeswapfixer-1.0.jar"
-            echo "- AuctionHouse-1.5.4.jar"
-            echo "- AxShulkers-1.23.3.jar"
-            echo "- CommandPanels.jar"
-            echo "- ItemEditor.jar"
-            echo "- ItemTag-3.7.7.jar"
-            echo "- OpenShulker-1.3.0.jar"
-            echo "- orbitalstrike-1.6.8.jar"
-            echo "- SCore-5.26.8.10.jar"
-            echo ""
-            echo "Se esses arquivos já existiam no backup restaurado, eles foram preservados."
-            echo "Nenhum arquivo do backup foi removido por este passo."
-          } | tee -a "$REPORT"
-
-          echo ""
-          echo "Relatório salvo em: $REPORT"
-          echo "Downloads individuais concluídos; consulte os itens pendentes no relatório."
-
-      - name: Verificar plugins e gerar diagnóstico
-        shell: bash
-        run: |
-          set -u
-
-          PLUGINS_DIR="minecraft/plugins"
-          REPORT="minecraft/diagnostico/plugins-internos.txt"
-
-          mkdir -p "$(dirname "$REPORT")"
-          : > "$REPORT"
-
-          echo "JARs encontrados em plugins/" >> "$REPORT"
-          echo "Data: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$REPORT"
-          echo "" >> "$REPORT"
-
-          find "$PLUGINS_DIR" -maxdepth 1 -type f -name '*.jar' -print \
-            | sort >> "$REPORT"
-
-          echo "" >> "$REPORT"
-          echo "Metadados plugin.yml / paper-plugin.yml" >> "$REPORT"
-
-          for jar in "$PLUGINS_DIR"/*.jar; do
-            [ -f "$jar" ] || continue
-
-            echo "" >> "$REPORT"
-            echo "===== $(basename "$jar") =====" >> "$REPORT"
-
-            if unzip -p "$jar" plugin.yml 2>/dev/null \
-              | sed -n '1,35p' >> "$REPORT"; then
-              :
-            else
-              unzip -p "$jar" paper-plugin.yml 2>/dev/null \
-                | sed -n '1,35p' >> "$REPORT" || true
-            fi
-          done
-
-          echo "Diagnóstico criado."
-
-      - name: Iniciar servidor e fazer backups periódicos
-        shell: bash
+      - name: Restaurar backup mais recente do servidor
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
+          mkdir -p minecraft
+          cd minecraft
+
+          RESTORED=false
+
+          if timeout 120s rclone copyto \
+            gdrive2:server-backup-latest.tar.gz \
+            server-backup-latest.tar.gz; then
+
+            if tar -tzf server-backup-latest.tar.gz >/dev/null 2>&1; then
+              tar -xzf server-backup-latest.tar.gz
+              RESTORED=true
+              echo "Backup mais recente restaurado."
+            else
+              echo "::warning::O backup mais recente não é um TAR.GZ válido."
+              rm -f server-backup-latest.tar.gz
+            fi
+          else
+            echo "::warning::Não foi possível baixar o backup mais recente."
+          fi
+
+          if [ "$RESTORED" != "true" ]; then
+            if timeout 120s rclone copyto \
+              gdrive2:server-backup-previous.tar.gz \
+              server-backup-previous.tar.gz; then
+
+              if tar -tzf server-backup-previous.tar.gz >/dev/null 2>&1; then
+                tar -xzf server-backup-previous.tar.gz
+                RESTORED=true
+                echo "Backup anterior restaurado."
+              else
+                echo "::warning::O backup anterior também não é um TAR.GZ válido."
+              fi
+            fi
+          fi
+
+          if [ "$RESTORED" != "true" ]; then
+            echo "::warning::Nenhum backup TAR.GZ pôde ser restaurado. Tentando baixar os mundos individualmente."
+
+            mkdir -p world world_nether world_the_end
+
+            python3 -m gdown \
+              "https://drive.google.com/uc?id=1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-" \
+              -O world.zip || true
+
+            python3 -m gdown \
+              "https://drive.google.com/uc?id=1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM" \
+              -O world_nether.zip || true
+
+            python3 -m gdown \
+              "https://drive.google.com/uc?id=1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt" \
+              -O world_the_end.zip || true
+
+            for ZIP in world.zip world_nether.zip world_the_end.zip; do
+              if [ -s "$ZIP" ] && unzip -tq "$ZIP" >/dev/null 2>&1; then
+                DEST="${ZIP%.zip}"
+                mkdir -p "$DEST"
+                unzip -oq "$ZIP" -d "$DEST"
+              else
+                echo "::warning::Não foi possível restaurar ${ZIP}."
+              fi
+            done
+          fi
+
+      - name: Aceitar EULA
+        run: |
+          mkdir -p minecraft
+          echo "eula=true" > minecraft/eula.txt
+
+      - name: Baixar plugins de fontes oficiais
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
+
+          mkdir -p minecraft/plugins
+          cd minecraft/plugins
+
+          download_direct() {
+            local name="$1"
+            local url="$2"
+            local output="$3"
+            local temp="${output}.download"
+
+            echo "Tentando baixar ${name}..."
+
+            if curl -fLsS --retry 2 --retry-delay 2 "$url" -o "$temp"; then
+              if file "$temp" | grep -qi 'Java archive'; then
+                mv "$temp" "$output"
+                echo "Plugin instalado: ${name}"
+                return 0
+              fi
+            fi
+
+            rm -f "$temp"
+            echo "::warning::Não foi possível baixar ${name}; será mantida a versão existente, se houver."
+            return 0
+          }
+
+          download_modrinth() {
+            local name="$1"
+            local slug="$2"
+            local output="$3"
+            local versions_json
+            local download_url
+            local temp="${output}.download"
+
+            echo "Consultando versão pública de ${name}..."
+
+            if ! versions_json="$(curl -fLsS --retry 2 \
+              "https://api.modrinth.com/v2/project/${slug}/version")"; then
+              echo "::warning::Não foi possível consultar ${name} no Modrinth."
+              return 0
+            fi
+
+            download_url="$(printf '%s' "$versions_json" | jq -r '
+              [
+                .[]
+                | select(any(.game_versions[]?; startswith("1.21")))
+              ][0].files[]?
+              | select(.primary == true)
+              | .url
+            ' | head -n 1)"
+
+            if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
+              download_url="$(printf '%s' "$versions_json" | jq -r '
+                [
+                  .[]
+                  | select(any(.game_versions[]?; startswith("1.21")))
+                ][0].files[0].url // empty
+              ')"
+            fi
+
+            if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
+              echo "::warning::Não foi encontrada uma versão 1.21.x de ${name} no Modrinth."
+              return 0
+            fi
+
+            if curl -fLsS --retry 2 --retry-delay 2 "$download_url" -o "$temp"; then
+              if file "$temp" | grep -qi 'Java archive'; then
+                mv "$temp" "$output"
+                echo "Plugin instalado: ${name}"
+                return 0
+              fi
+            fi
+
+            rm -f "$temp"
+            echo "::warning::O download de ${name} falhou; será mantida a versão existente, se houver."
+            return 0
+          }
+
+          # Downloads oficiais do GeyserMC.
+          download_direct \
+            "Geyser-Spigot" \
+            "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot" \
+            "Geyser-Spigot.jar"
+
+          download_direct \
+            "floodgate-spigot" \
+            "https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot" \
+            "floodgate-spigot.jar"
+
+          # Projetos públicos consultados pela API oficial do Modrinth.
+          # Se um projeto não estiver disponível por essa API, o workflow
+          # preserva o JAR que já existir na pasta plugins restaurada.
+          download_modrinth "LuckPerms" "luckperms" "LuckPerms.jar"
+          download_modrinth "WorldEdit" "worldedit" "WorldEdit.jar"
+          download_modrinth "ViaVersion" "viaversion" "ViaVersion.jar"
+          download_modrinth "Simple Voice Chat" "voicechat" "voicechat.jar"
+          download_modrinth "DropHeads" "dropheads" "DropHeads.jar"
+          download_modrinth "SkinsRestorer" "skinsrestorer" "SkinsRestorer.jar"
+          download_modrinth "TAB" "tab" "TAB.jar"
+          download_modrinth "Shopkeepers" "shopkeepers" "Shopkeepers.jar"
+
+          echo
+          echo "Plugins presentes após as tentativas de download:"
+          find . -maxdepth 1 -type f -name '*.jar' -printf '%f\n' | sort
+
+      - name: Configurar servidor
+        shell: bash
         run: |
           set -euo pipefail
 
           cd minecraft
 
-          backup_server() {
-            local archive="/tmp/server-backup.tar.gz"
+          touch server.properties
 
-            echo "Criando backup em $(date -u '+%Y-%m-%d %H:%M:%S UTC')..."
+          if ! grep -q '^online-mode=' server.properties; then
+            echo 'online-mode=false' >> server.properties
+          else
+            sed -i 's/^online-mode=.*/online-mode=false/' server.properties
+          fi
+
+          if ! grep -q '^server-port=' server.properties; then
+            echo 'server-port=25565' >> server.properties
+          fi
+
+          if ! grep -q '^enable-command-block=' server.properties; then
+            echo 'enable-command-block=true' >> server.properties
+          fi
+
+          mkdir -p logs
+
+      - name: Iniciar Playit
+        env:
+          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PLAYIT_SECRET:-}" ]; then
+            echo "::warning::O segredo PLAYIT_SECRET não está configurado. O túnel não será iniciado."
+            exit 0
+          fi
+
+          docker pull ghcr.io/playit-cloud/playit-agent:latest
+
+          docker run -d \
+            --name playit \
+            --network host \
+            -e SECRET="$PLAYIT_SECRET" \
+            ghcr.io/playit-cloud/playit-agent:latest
+
+          sleep 5
+          docker logs playit || true
+
+      - name: Iniciar Minecraft e manter o servidor ativo
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
+
+          cd minecraft
+
+          nohup java -Xms2G -Xmx8G -jar paper.jar --nogui \
+            > server.log 2>&1 &
+
+          SERVER_PID=$!
+          echo "$SERVER_PID" > server.pid
+
+          backup_server() {
+            echo "Criando backup do servidor..."
+
+            local archive="server-backup-current.tar.gz"
 
             tar -czf "$archive" \
               --exclude='./server.log' \
-              --exclude='./diagnostico' \
-              -C "$GITHUB_WORKSPACE/minecraft" .
+              --exclude='./logs/*' \
+              --exclude='./server-backup-*.tar.gz' \
+              --exclude='./server.pid' \
+              --exclude='./paper.jar' \
+              .
 
-            # Preserva o backup anterior antes de atualizar o mais recente.
-            rclone copyto \
-              "gdrive2:server-backup-latest.tar.gz" \
-              "gdrive2:server-backup-previous.tar.gz" || true
+            if [ -f "$archive" ]; then
+              if timeout 120s rclone copyto \
+                gdrive2:server-backup-latest.tar.gz \
+                gdrive2:server-backup-previous.tar.gz; then
+                echo "Backup anterior preservado."
+              else
+                echo "Ainda não existe backup anterior, ou não foi possível copiá-lo."
+              fi
 
-            rclone copyto "$archive" \
-              "gdrive2:server-backup-latest.tar.gz"
+              timeout 180s rclone copyto \
+                "$archive" \
+                gdrive2:server-backup-latest.tar.gz
 
-            echo "Backup enviado ao Google Drive."
+              rm -f "$archive"
+              echo "Backup mais recente enviado."
+            fi
           }
 
-          echo "Iniciando Paper 1.21.11..."
-          java -Xms2G -Xmx8G -jar paper.jar nogui \
-            > server.log 2>&1 &
-          SERVER_PID=$!
-
-          # Primeiro backup após dois minutos para dar tempo de salvar dados.
+          echo "Aguardando inicialização do servidor..."
           sleep 120
 
-          if kill -0 "$SERVER_PID" 2>/dev/null; then
-            backup_server
-          else
-            echo "O servidor encerrou antes do primeiro backup."
-            tail -n 150 server.log || true
+          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "::error::O servidor Minecraft encerrou durante a inicialização."
+            tail -n 120 server.log || true
             exit 1
           fi
 
-          # Backups periódicos a cada 10 minutos.
-          for i in $(seq 1 32); do
+          backup_server
+
+          # Mantém o servidor ativo por aproximadamente 5h25.
+          # Faz backup a cada 10 minutos e encerra com backup final.
+          for MINUTE in $(seq 1 32); do
             sleep 600
 
             if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-              echo "O servidor encerrou; interrompendo o ciclo."
+              echo "::error::O processo do Minecraft encerrou inesperadamente."
+              tail -n 120 server.log || true
               break
             fi
 
             backup_server
           done
 
-          # Completa aproximadamente 5h25 de sessão.
+          echo "Preparando backup final..."
+
           if kill -0 "$SERVER_PID" 2>/dev/null; then
-            sleep 180
+            backup_server
+            kill "$SERVER_PID" || true
+            sleep 10
           fi
 
-          echo "Encerrando o servidor..."
-          kill -TERM "$SERVER_PID" 2>/dev/null || true
+          docker logs playit || true
+          tail -n 80 server.log || true
 
-          for i in $(seq 1 30); do
-            kill -0 "$SERVER_PID" 2>/dev/null || break
-            sleep 2
-          done
-
-          kill -KILL "$SERVER_PID" 2>/dev/null || true
-          wait "$SERVER_PID" 2>/dev/null || true
-
-          # Backup final após o encerramento do servidor.
-          backup_server
-
-          echo "Sessão concluída."
-
-      - name: Publicar diagnóstico
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: minecraft-diagnostico
-          path: |
-            minecraft/server.log
-            minecraft/diagnostico/
-          if-no-files-found: warn
-          retention-days: 3
