@@ -22,7 +22,6 @@ jobs:
           sudo apt-get install -y \
             curl jq unzip tar gzip file coreutils python3-pip rclone
 
-          echo "Versão do rclone instalada:"
           rclone version
 
       - name: Instalar Java 21
@@ -64,26 +63,23 @@ jobs:
           chmod 600 "$HOME/.config/rclone/rclone.conf"
 
           if ! rclone listremotes | grep -qx 'gdrive2:'; then
-            echo "::error::O arquivo rclone.conf não contém o remote gdrive2. Verifique o segredo RCLONE_CONFIG_B64."
-            echo "Remotes encontrados:"
+            echo "::error::O arquivo rclone.conf não contém o remote gdrive2."
             rclone listremotes || true
             exit 1
           fi
 
-          # Aponta o remote para a pasta do Drive sem alterar o arquivo
-          # de configuração nem iniciar uma autenticação interativa.
           export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
 
           echo "Verificando acesso ao Google Drive..."
 
           if ! timeout 30s rclone lsf gdrive2: --max-depth 1 >/dev/null; then
-            echo "::error::O acesso ao Google Drive falhou. Confira o token OAuth e a configuração do remote gdrive2 no segredo RCLONE_CONFIG_B64."
+            echo "::error::Falha no Google Drive. Verifique o token OAuth e a configuração RCLONE_CONFIG_B64."
             exit 1
           fi
 
           echo "Google Drive conectado."
 
-      - name: Baixar Paper 1.21.11
+      - name: Baixar Paper 1.21.11 pela API atual
         shell: bash
         run: |
           set -euo pipefail
@@ -91,15 +87,75 @@ jobs:
           mkdir -p minecraft
           cd minecraft
 
-          BUILD="132"
-          URL="https://api.papermc.io/v2/projects/paper/versions/1.21.11/builds/${BUILD}/downloads/paper-1.21.11-${BUILD}.jar"
+          PROJECT="paper"
+          MC_VERSION="1.21.11"
+          USER_AGENT="Minecraft-Test-GitHub-Actions/1.0 (https://github.com)"
 
-          curl -fLsS --retry 3 --retry-delay 2 "$URL" -o paper.jar
+          API_URL="https://fill.papermc.io/v3/projects/${PROJECT}/versions/${MC_VERSION}/builds"
 
-          if ! file paper.jar | grep -qi 'Java archive'; then
-            echo "::error::O arquivo baixado do Paper não é um JAR válido."
+          echo "Consultando builds estáveis do Paper ${MC_VERSION}..."
+
+          BUILDS_JSON="$(curl -fLsS \
+            --retry 3 \
+            --retry-delay 2 \
+            -H "User-Agent: ${USER_AGENT}" \
+            -H "Accept: application/json" \
+            "$API_URL")"
+
+          if printf '%s' "$BUILDS_JSON" | jq -e '.ok == false' >/dev/null 2>&1; then
+            echo "::error::A API do Paper retornou um erro:"
+            printf '%s' "$BUILDS_JSON" | jq .
             exit 1
           fi
+
+          PAPER_URL="$(printf '%s' "$BUILDS_JSON" | jq -r '
+            first(
+              .[]
+              | select(.channel == "STABLE")
+              | .downloads["server:default"].url
+            ) // empty
+          ')"
+
+          PAPER_SHA256="$(printf '%s' "$BUILDS_JSON" | jq -r '
+            first(
+              .[]
+              | select(.channel == "STABLE")
+              | .downloads["server:default"].checksums.sha256
+            ) // empty
+          ')"
+
+          PAPER_BUILD="$(printf '%s' "$BUILDS_JSON" | jq -r '
+            first(.[] | select(.channel == "STABLE") | .id) // empty
+          ')"
+
+          if [ -z "$PAPER_URL" ] || [ "$PAPER_URL" = "null" ]; then
+            echo "::error::Não foi encontrada uma build estável do Paper ${MC_VERSION}."
+            exit 1
+          fi
+
+          echo "Build estável encontrada: ${PAPER_BUILD}"
+          echo "Baixando Paper..."
+
+          curl -fLsS \
+            --retry 3 \
+            --retry-delay 2 \
+            -H "User-Agent: ${USER_AGENT}" \
+            "$PAPER_URL" \
+            -o paper.jar
+
+          if ! file paper.jar | grep -qi 'Java archive'; then
+            echo "::error::O download não produziu um JAR válido."
+            rm -f paper.jar
+            exit 1
+          fi
+
+          if [ -n "$PAPER_SHA256" ] && [ "$PAPER_SHA256" != "null" ]; then
+            echo "${PAPER_SHA256}  paper.jar" | sha256sum --check
+          else
+            echo "::warning::A API não forneceu checksum; o arquivo foi validado apenas como JAR."
+          fi
+
+          echo "Paper ${MC_VERSION}, build ${PAPER_BUILD}, pronto."
 
       - name: Restaurar backup do servidor
         env:
@@ -184,8 +240,6 @@ jobs:
           echo "eula=true" > minecraft/eula.txt
 
       - name: Baixar plugins públicos individualmente
-        env:
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -211,6 +265,7 @@ jobs:
 
             rm -f "$temp"
             echo "::warning::Falha no download de ${name}; o JAR existente será preservado, se houver."
+            return 0
           }
 
           download_modrinth() {
@@ -262,6 +317,7 @@ jobs:
 
             rm -f "$temp"
             echo "::warning::Download inválido de ${name}; o JAR existente será preservado, se houver."
+            return 0
           }
 
           # Downloads oficiais do GeyserMC
@@ -392,7 +448,6 @@ jobs:
 
           backup_server
 
-          # 32 ciclos de 10 minutos, com backup em cada ciclo.
           for MINUTE in $(seq 1 32); do
             sleep 600
 
