@@ -17,11 +17,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           sudo apt-get update
-          sudo apt-get install -y \
-            curl jq unzip tar gzip file coreutils python3-pip rclone
-
+          sudo apt-get install -y curl jq unzip tar gzip file coreutils python3-pip rclone
           rclone version
 
       - name: Instalar Java 21
@@ -43,37 +40,32 @@ jobs:
           set -euo pipefail
 
           if [ -z "${RCLONE_CONFIG_B64:-}" ]; then
-            echo "::error::O segredo RCLONE_CONFIG_B64 não está configurado."
+            echo "::error::RCLONE_CONFIG_B64 não configurado."
             exit 1
           fi
 
           if [ -z "${GDRIVE_FOLDER_ID:-}" ]; then
-            echo "::error::O segredo GDRIVE_FOLDER_ID não está configurado."
+            echo "::error::GDRIVE_FOLDER_ID não configurado."
             exit 1
           fi
 
           mkdir -p "$HOME/.config/rclone"
 
-          if ! printf '%s' "$RCLONE_CONFIG_B64" \
-            | base64 --decode > "$HOME/.config/rclone/rclone.conf"; then
-            echo "::error::RCLONE_CONFIG_B64 não contém uma configuração Base64 válida."
-            exit 1
-          fi
+          printf '%s' "$RCLONE_CONFIG_B64" \
+            | base64 --decode > "$HOME/.config/rclone/rclone.conf"
 
           chmod 600 "$HOME/.config/rclone/rclone.conf"
 
           if ! rclone listremotes | grep -qx 'gdrive2:'; then
-            echo "::error::O arquivo rclone.conf não contém o remote gdrive2."
+            echo "::error::O remote gdrive2 não foi encontrado no rclone.conf."
             rclone listremotes || true
             exit 1
           fi
 
           export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
 
-          echo "Verificando acesso ao Google Drive..."
-
           if ! timeout 30s rclone lsf gdrive2: --max-depth 1 >/dev/null; then
-            echo "::error::Falha no Google Drive. Verifique o token OAuth e a configuração RCLONE_CONFIG_B64."
+            echo "::error::Falha ao acessar o Google Drive. Verifique a autenticação do rclone."
             exit 1
           fi
 
@@ -87,41 +79,23 @@ jobs:
           mkdir -p minecraft
           cd minecraft
 
-          PROJECT="paper"
           MC_VERSION="1.21.11"
           USER_AGENT="Minecraft-Test-GitHub-Actions/1.0 (https://github.com)"
+          API_URL="https://fill.papermc.io/v3/projects/paper/versions/${MC_VERSION}/builds"
 
-          API_URL="https://fill.papermc.io/v3/projects/${PROJECT}/versions/${MC_VERSION}/builds"
-
-          echo "Consultando builds estáveis do Paper ${MC_VERSION}..."
-
-          BUILDS_JSON="$(curl -fLsS \
-            --retry 3 \
-            --retry-delay 2 \
+          BUILDS_JSON="$(curl -fLsS --retry 3 --retry-delay 2 \
             -H "User-Agent: ${USER_AGENT}" \
             -H "Accept: application/json" \
             "$API_URL")"
 
-          if printf '%s' "$BUILDS_JSON" | jq -e '.ok == false' >/dev/null 2>&1; then
-            echo "::error::A API do Paper retornou um erro:"
-            printf '%s' "$BUILDS_JSON" | jq .
-            exit 1
-          fi
-
           PAPER_URL="$(printf '%s' "$BUILDS_JSON" | jq -r '
-            first(
-              .[]
-              | select(.channel == "STABLE")
-              | .downloads["server:default"].url
-            ) // empty
+            first(.[] | select(.channel == "STABLE") |
+            .downloads["server:default"].url) // empty
           ')"
 
           PAPER_SHA256="$(printf '%s' "$BUILDS_JSON" | jq -r '
-            first(
-              .[]
-              | select(.channel == "STABLE")
-              | .downloads["server:default"].checksums.sha256
-            ) // empty
+            first(.[] | select(.channel == "STABLE") |
+            .downloads["server:default"].checksums.sha256) // empty
           ')"
 
           PAPER_BUILD="$(printf '%s' "$BUILDS_JSON" | jq -r '
@@ -133,29 +107,20 @@ jobs:
             exit 1
           fi
 
-          echo "Build estável encontrada: ${PAPER_BUILD}"
-          echo "Baixando Paper..."
+          echo "Baixando Paper ${MC_VERSION}, build ${PAPER_BUILD}..."
 
-          curl -fLsS \
-            --retry 3 \
-            --retry-delay 2 \
+          curl -fLsS --retry 3 --retry-delay 2 \
             -H "User-Agent: ${USER_AGENT}" \
-            "$PAPER_URL" \
-            -o paper.jar
+            "$PAPER_URL" -o paper.jar
 
           if ! file paper.jar | grep -qi 'Java archive'; then
-            echo "::error::O download não produziu um JAR válido."
-            rm -f paper.jar
+            echo "::error::O arquivo do Paper não é um JAR válido."
             exit 1
           fi
 
           if [ -n "$PAPER_SHA256" ] && [ "$PAPER_SHA256" != "null" ]; then
             echo "${PAPER_SHA256}  paper.jar" | sha256sum --check
-          else
-            echo "::warning::A API não forneceu checksum; o arquivo foi validado apenas como JAR."
           fi
-
-          echo "Paper ${MC_VERSION}, build ${PAPER_BUILD}, pronto."
 
       - name: Restaurar backup do servidor
         env:
@@ -203,7 +168,7 @@ jobs:
           fi
 
           if [ "$RESTORED" != "true" ]; then
-            echo "::warning::Nenhum backup completo foi restaurado. Tentando recuperar os mundos individualmente."
+            echo "::warning::Tentando recuperar os mundos individualmente."
 
             for WORLD in world world_nether world_the_end; do
               case "$WORLD" in
@@ -226,10 +191,10 @@ jobs:
                   mkdir -p "$WORLD"
                   unzip -oq "${WORLD}.zip" -d "$WORLD"
                 else
-                  echo "::warning::O arquivo ${WORLD}.zip não é um ZIP válido."
+                  echo "::warning::${WORLD}.zip não é um ZIP válido."
                 fi
               else
-                echo "::warning::Não foi possível baixar o mundo ${WORLD}."
+                echo "::warning::Falha ao baixar ${WORLD}."
               fi
             done
           fi
@@ -264,8 +229,7 @@ jobs:
             fi
 
             rm -f "$temp"
-            echo "::warning::Falha no download de ${name}; o JAR existente será preservado, se houver."
-            return 0
+            echo "::warning::Falha no download de ${name}; JAR existente preservado, se houver."
           }
 
           download_modrinth() {
@@ -316,11 +280,10 @@ jobs:
             fi
 
             rm -f "$temp"
-            echo "::warning::Download inválido de ${name}; o JAR existente será preservado, se houver."
+            echo "::warning::Download inválido de ${name}; JAR existente preservado, se houver."
             return 0
           }
 
-          # Downloads oficiais do GeyserMC
           download_direct \
             "Geyser-Spigot" \
             "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot" \
@@ -331,7 +294,6 @@ jobs:
             "https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot" \
             "floodgate-spigot.jar"
 
-          # Projetos públicos consultados pela API do Modrinth.
           download_modrinth "LuckPerms" "luckperms" "LuckPerms.jar"
           download_modrinth "WorldEdit" "worldedit" "WorldEdit.jar"
           download_modrinth "ViaVersion" "viaversion" "ViaVersion.jar"
@@ -341,7 +303,7 @@ jobs:
           download_modrinth "TAB" "tab" "TAB.jar"
           download_modrinth "Shopkeepers" "shopkeepers" "Shopkeepers.jar"
 
-          echo "JARs presentes:"
+          echo "Plugins presentes:"
           find . -maxdepth 1 -type f -name '*.jar' -printf '%f\n' | sort
 
       - name: Configurar servidor
@@ -376,7 +338,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "${PLAYIT_SECRET:-}" ]; then
-            echo "::warning::PLAYIT_SECRET não configurado. O túnel não será iniciado."
+            echo "::warning::PLAYIT_SECRET não configurado; túnel não iniciado."
             exit 0
           fi
 
@@ -399,7 +361,6 @@ jobs:
           set -euo pipefail
 
           export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
-
           cd minecraft
 
           nohup java -Xms2G -Xmx8G -jar paper.jar --nogui \
@@ -412,19 +373,42 @@ jobs:
             echo "Criando backup..."
 
             local archive="server-backup-current.tar.gz"
+            local tar_status=0
 
-            tar -czf "$archive" \
+            rm -f "$archive"
+
+            # O servidor continua ativo. O tar pode retornar código 1
+            # se algum arquivo mudar durante a leitura; verificamos
+            # separadamente se o arquivo compactado continua legível.
+            set +e
+            tar --warning=no-file-changed \
+              --ignore-failed-read \
+              -czf "$archive" \
               --exclude='./server.log' \
               --exclude='./logs/*' \
               --exclude='./server-backup-*.tar.gz' \
               --exclude='./server.pid' \
               --exclude='./paper.jar' \
               .
+            tar_status=$?
+            set -e
 
+            if [ ! -s "$archive" ] || ! tar -tzf "$archive" >/dev/null 2>&1; then
+              echo "::error::O arquivo de backup não foi gerado corretamente."
+              rm -f "$archive"
+              return 1
+            fi
+
+            if [ "$tar_status" -ne 0 ]; then
+              echo "::warning::Alguns arquivos mudaram durante a compactação. O arquivo passou na validação, mas pode não representar um estado perfeitamente consistente do mundo."
+            fi
+
+            # Atualiza o backup anterior somente depois de criar e validar
+            # o novo arquivo local.
             if timeout 120s rclone copyto \
               gdrive2:server-backup-latest.tar.gz \
               gdrive2:server-backup-previous.tar.gz; then
-              echo "Backup anterior atualizado."
+              echo "Backup anterior preservado."
             else
               echo "Não foi possível copiar o backup anterior; continuando."
             fi
@@ -434,7 +418,7 @@ jobs:
               gdrive2:server-backup-latest.tar.gz
 
             rm -f "$archive"
-            echo "Backup mais recente enviado."
+            echo "Backup mais recente enviado ao Google Drive."
           }
 
           echo "Aguardando o Minecraft iniciar..."
@@ -448,11 +432,11 @@ jobs:
 
           backup_server
 
-          for MINUTE in $(seq 1 32); do
+          for CYCLE in $(seq 1 32); do
             sleep 600
 
             if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-              echo "::warning::O processo do Minecraft encerrou inesperadamente."
+              echo "::warning::O Minecraft encerrou inesperadamente."
               tail -n 120 server.log || true
               break
             fi
@@ -460,7 +444,7 @@ jobs:
             backup_server
           done
 
-          echo "Tentando criar o backup final..."
+          echo "Criando backup final..."
 
           if kill -0 "$SERVER_PID" 2>/dev/null; then
             backup_server || echo "::error::Falha ao criar o backup final."
