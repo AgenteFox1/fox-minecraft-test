@@ -7,450 +7,510 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: minecraft-test-server
+  cancel-in-progress: false
+
 jobs:
-  minecraft:
+  server:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 360
+
+    env:
+      GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+      RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
+      PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+
+      PLUGIN_ZIP_ID: "14OF6wa80pT4VOJch7-8kdvs42jRnCj78"
+
+      WORLD_ZIP_ID: "1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-"
+      NETHER_ZIP_ID: "1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM"
+      END_ZIP_ID: "1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt"
 
     steps:
-      - name: Preparar ambiente e instalar rclone
+      - name: Preparar Java, ferramentas e diretórios
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y curl jq unzip tar gzip file coreutils python3-pip rclone
+          sudo apt-get install -y \
+            openjdk-21-jre-headless \
+            curl \
+            jq \
+            unzip \
+            tar \
+            gzip \
+            coreutils \
+            rclone
+
+          mkdir -p minecraft/plugins
+          mkdir -p downloads
+          mkdir -p logs
+
+          java -version
           rclone version
 
-      - name: Instalar Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Instalar ferramentas auxiliares
-        run: |
-          python3 -m pip install --break-system-packages gdown
-
-      - name: Configurar e verificar Google Drive
-        env:
-          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+      - name: Configurar autenticação do Google Drive
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
-          if [ -z "${RCLONE_CONFIG_B64:-}" ]; then
-            echo "::error::RCLONE_CONFIG_B64 não configurado."
-            exit 1
-          fi
-
-          if [ -z "${GDRIVE_FOLDER_ID:-}" ]; then
-            echo "::error::GDRIVE_FOLDER_ID não configurado."
+          if [[ -z "${RCLONE_CONFIG_B64:-}" ]]; then
+            echo "::error::O secret RCLONE_CONFIG_B64 está vazio."
             exit 1
           fi
 
           mkdir -p "$HOME/.config/rclone"
 
           printf '%s' "$RCLONE_CONFIG_B64" \
-            | base64 --decode > "$HOME/.config/rclone/rclone.conf"
+            | base64 --decode \
+            > "$HOME/.config/rclone/rclone.conf"
 
           chmod 600 "$HOME/.config/rclone/rclone.conf"
 
-          if ! rclone listremotes | grep -qx 'gdrive2:'; then
-            echo "::error::O remote gdrive2 não foi encontrado no rclone.conf."
-            rclone listremotes || true
+          if [[ -n "${GDRIVE_FOLDER_ID:-}" ]]; then
+            echo "RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID=$GDRIVE_FOLDER_ID" \
+              >> "$GITHUB_ENV"
+          fi
+
+          echo "Testando acesso ao Google Drive..."
+
+          if ! timeout 45s rclone lsf gdrive2: \
+              --max-depth 1 \
+              2> >(sed -E \
+                's/(access_token|refresh_token|client_secret|token)[=:][^,} ]+/\1=[REDACTED]/Ig' \
+                >&2); then
+            echo "::error::Não foi possível acessar o Google Drive. Verifique RCLONE_CONFIG_B64, a autenticação e GDRIVE_FOLDER_ID."
             exit 1
           fi
 
-          export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
+          echo "Google Drive acessível."
 
-          if ! timeout 30s rclone lsf gdrive2: --max-depth 1 >/dev/null; then
-            echo "::error::Falha ao acessar o Google Drive. Verifique a autenticação do rclone."
-            exit 1
-          fi
-
-          echo "Google Drive conectado."
-
-      - name: Baixar Paper 1.21.11 pela API atual
+      - name: Baixar backup completo do servidor
+        id: backup
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
-          mkdir -p minecraft
-          cd minecraft
+          cd downloads
 
-          MC_VERSION="1.21.11"
-          USER_AGENT="Minecraft-Test-GitHub-Actions/1.0 (https://github.com)"
-          API_URL="https://fill.papermc.io/v3/projects/paper/versions/${MC_VERSION}/builds"
-
-          BUILDS_JSON="$(curl -fLsS --retry 3 --retry-delay 2 \
-            -H "User-Agent: ${USER_AGENT}" \
-            -H "Accept: application/json" \
-            "$API_URL")"
-
-          PAPER_URL="$(printf '%s' "$BUILDS_JSON" | jq -r '
-            first(.[] | select(.channel == "STABLE") |
-            .downloads["server:default"].url) // empty
-          ')"
-
-          PAPER_SHA256="$(printf '%s' "$BUILDS_JSON" | jq -r '
-            first(.[] | select(.channel == "STABLE") |
-            .downloads["server:default"].checksums.sha256) // empty
-          ')"
-
-          PAPER_BUILD="$(printf '%s' "$BUILDS_JSON" | jq -r '
-            first(.[] | select(.channel == "STABLE") | .id) // empty
-          ')"
-
-          if [ -z "$PAPER_URL" ] || [ "$PAPER_URL" = "null" ]; then
-            echo "::error::Não foi encontrada uma build estável do Paper ${MC_VERSION}."
-            exit 1
-          fi
-
-          echo "Baixando Paper ${MC_VERSION}, build ${PAPER_BUILD}..."
-
-          curl -fLsS --retry 3 --retry-delay 2 \
-            -H "User-Agent: ${USER_AGENT}" \
-            "$PAPER_URL" -o paper.jar
-
-          if ! file paper.jar | grep -qi 'Java archive'; then
-            echo "::error::O arquivo do Paper não é um JAR válido."
-            exit 1
-          fi
-
-          if [ -n "$PAPER_SHA256" ] && [ "$PAPER_SHA256" != "null" ]; then
-            echo "${PAPER_SHA256}  paper.jar" | sha256sum --check
-          fi
-
-      - name: Restaurar backup do servidor
-        env:
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
-
-          mkdir -p minecraft
-          cd minecraft
-
-          RESTORED=false
+          echo "Procurando server-backup-latest.tar.gz no Google Drive..."
 
           if timeout 120s rclone copyto \
-            gdrive2:server-backup-latest.tar.gz \
-            server-backup-latest.tar.gz; then
+              "gdrive2:server-backup-latest.tar.gz" \
+              "server-backup-latest.tar.gz" \
+              --retries 3 \
+              --low-level-retries 5; then
 
-            if tar -tzf server-backup-latest.tar.gz >/dev/null 2>&1; then
-              tar -xzf server-backup-latest.tar.gz
-              RESTORED=true
-              echo "Backup mais recente restaurado."
+            if tar -tzf server-backup-latest.tar.gz >/dev/null; then
+              echo "Backup completo encontrado e validado."
+              echo "available=true" >> "$GITHUB_OUTPUT"
             else
-              echo "::warning::O backup mais recente não é válido."
-              rm -f server-backup-latest.tar.gz
+              echo "::error::O arquivo server-backup-latest.tar.gz foi baixado, mas não é um arquivo TAR.GZ válido."
+              exit 1
             fi
           else
-            echo "::warning::Não foi possível baixar o backup mais recente."
+            echo "Não foi possível baixar o backup mais recente."
+            echo "O workflow tentará restaurar os mundos pelos ZIPs individuais."
+            echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ "$RESTORED" != "true" ]; then
-            if timeout 120s rclone copyto \
-              gdrive2:server-backup-previous.tar.gz \
-              server-backup-previous.tar.gz; then
-
-              if tar -tzf server-backup-previous.tar.gz >/dev/null 2>&1; then
-                tar -xzf server-backup-previous.tar.gz
-                RESTORED=true
-                echo "Backup anterior restaurado."
-              else
-                echo "::warning::O backup anterior não é válido."
-              fi
-            fi
-          fi
-
-          if [ "$RESTORED" != "true" ]; then
-            echo "::warning::Tentando recuperar os mundos individualmente."
-
-            for WORLD in world world_nether world_the_end; do
-              case "$WORLD" in
-                world)
-                  ID="1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-"
-                  ;;
-                world_nether)
-                  ID="1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM"
-                  ;;
-                world_the_end)
-                  ID="1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt"
-                  ;;
-              esac
-
-              if python3 -m gdown \
-                "https://drive.google.com/uc?id=${ID}" \
-                -O "${WORLD}.zip"; then
-
-                if [ -s "${WORLD}.zip" ] && unzip -tq "${WORLD}.zip" >/dev/null 2>&1; then
-                  mkdir -p "$WORLD"
-                  unzip -oq "${WORLD}.zip" -d "$WORLD"
-                else
-                  echo "::warning::${WORLD}.zip não é um ZIP válido."
-                fi
-              else
-                echo "::warning::Falha ao baixar ${WORLD}."
-              fi
-            done
-          fi
-
-      - name: Aceitar EULA
-        run: |
-          mkdir -p minecraft
-          echo "eula=true" > minecraft/eula.txt
-
-      - name: Baixar plugins públicos individualmente
+      - name: Restaurar backup completo
+        if: steps.backup.outputs.available == 'true'
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+
+          mkdir -p minecraft
+
+          echo "Extraindo backup sem apagar arquivos existentes..."
+
+          tar \
+            --no-same-owner \
+            -xzf downloads/server-backup-latest.tar.gz \
+            -C minecraft
+
+          echo "Conteúdo restaurado:"
+          find minecraft -maxdepth 2 -type d | sort | head -200
+
+          for world in world world_nether world_the_end; do
+            if [[ -d "minecraft/$world" ]]; then
+              echo "Mundo restaurado: $world"
+            else
+              echo "Aviso: $world não foi encontrado no backup."
+            fi
+          done
+
+      - name: Restaurar mundos pelos ZIPs individuais se necessário
+        if: steps.backup.outputs.available != 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          download_drive_file() {
+            local file_id="$1"
+            local output="$2"
+
+            echo "Baixando arquivo do Drive: $output"
+
+            rclone copyid "$file_id" "$PWD/downloads/$output" \
+              --retries 3 \
+              --low-level-retries 5
+
+            test -s "downloads/$output"
+            unzip -t "downloads/$output" >/dev/null
+          }
+
+          restore_world() {
+            local file_id="$1"
+            local world_name="$2"
+            local zip_file="$3"
+
+            download_drive_file "$file_id" "$zip_file"
+
+            mkdir -p "minecraft/$world_name"
+
+            unzip -oq "downloads/$zip_file" \
+              -d "minecraft/$world_name"
+
+            echo "Mundo restaurado: $world_name"
+          }
+
+          restore_world "$WORLD_ZIP_ID" \
+            "world" "world.zip"
+
+          restore_world "$NETHER_ZIP_ID" \
+            "world_nether" "world_nether.zip"
+
+          restore_world "$END_ZIP_ID" \
+            "world_the_end" "world_the_end.zip"
+
+      - name: Baixar e restaurar o ZIP de plugins do Drive
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "Baixando o pacote de plugins..."
+
+          rclone copyid "$PLUGIN_ZIP_ID" \
+            "$PWD/downloads/plugins-drive.zip" \
+            --retries 3 \
+            --low-level-retries 5
+
+          test -s downloads/plugins-drive.zip
+
+          if ! unzip -t downloads/plugins-drive.zip >/dev/null; then
+            echo "::error::O ZIP de plugins baixado está inválido."
+            exit 1
+          fi
+
+          mkdir -p downloads/plugins-extraidos
+          unzip -oq downloads/plugins-drive.zip \
+            -d downloads/plugins-extraidos
 
           mkdir -p minecraft/plugins
-          cd minecraft/plugins
 
-          download_direct() {
-            local name="$1"
-            local url="$2"
-            local output="$3"
-            local temp="${output}.download"
+          # Copia os JARs mesmo se estiverem em subpastas do ZIP.
+          # Não apaga os diretórios de configuração já restaurados.
+          mapfile -d '' plugin_jars < <(
+            find downloads/plugins-extraidos \
+              -type f -iname '*.jar' -print0
+          )
 
-            echo "Baixando ${name}..."
+          if (( ${#plugin_jars[@]} == 0 )); then
+            echo "::error::Nenhum arquivo .jar foi encontrado dentro do ZIP de plugins."
+            echo "Estrutura do ZIP:"
+            find downloads/plugins-extraidos -maxdepth 4 -type f | head -200
+            exit 1
+          fi
 
-            if curl -fLsS --retry 2 --retry-delay 2 "$url" -o "$temp"; then
-              if file "$temp" | grep -qi 'Java archive'; then
-                mv "$temp" "$output"
-                echo "Instalado: ${name}"
-                return 0
-              fi
-            fi
+          for jar in "${plugin_jars[@]}"; do
+            filename="$(basename "$jar")"
+            cp -f "$jar" "minecraft/plugins/$filename"
+            echo "Plugin instalado: $filename"
+          done
 
-            rm -f "$temp"
-            echo "::warning::Falha no download de ${name}; JAR existente preservado, se houver."
-          }
+          echo
+          echo "Total de arquivos JAR copiados: ${#plugin_jars[@]}"
+          echo "Plugins finais:"
+          find minecraft/plugins -maxdepth 1 -type f -iname '*.jar' \
+            -printf '%f\n' | sort
 
-          download_modrinth() {
-            local name="$1"
-            local slug="$2"
-            local output="$3"
-            local versions_json
-            local download_url
-            local temp="${output}.download"
-
-            echo "Consultando ${name}..."
-
-            if ! versions_json="$(curl -fLsS --retry 2 \
-              "https://api.modrinth.com/v2/project/${slug}/version")"; then
-              echo "::warning::Não foi possível consultar ${name} no Modrinth."
-              return 0
-            fi
-
-            download_url="$(printf '%s' "$versions_json" | jq -r '
-              [
-                .[]
-                | select(any(.game_versions[]?; startswith("1.21")))
-              ][0].files[]?
-              | select(.primary == true)
-              | .url
-            ' | head -n 1)"
-
-            if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
-              download_url="$(printf '%s' "$versions_json" | jq -r '
-                [
-                  .[]
-                  | select(any(.game_versions[]?; startswith("1.21")))
-                ][0].files[0].url // empty
-              ')"
-            fi
-
-            if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
-              echo "::warning::Nenhum arquivo compatível encontrado para ${name}."
-              return 0
-            fi
-
-            if curl -fLsS --retry 2 --retry-delay 2 "$download_url" -o "$temp"; then
-              if file "$temp" | grep -qi 'Java archive'; then
-                mv "$temp" "$output"
-                echo "Instalado: ${name}"
-                return 0
-              fi
-            fi
-
-            rm -f "$temp"
-            echo "::warning::Download inválido de ${name}; JAR existente preservado, se houver."
-            return 0
-          }
-
-          download_direct \
-            "Geyser-Spigot" \
-            "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot" \
-            "Geyser-Spigot.jar"
-
-          download_direct \
-            "Floodgate" \
-            "https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot" \
-            "floodgate-spigot.jar"
-
-          download_modrinth "LuckPerms" "luckperms" "LuckPerms.jar"
-          download_modrinth "WorldEdit" "worldedit" "WorldEdit.jar"
-          download_modrinth "ViaVersion" "viaversion" "ViaVersion.jar"
-          download_modrinth "Simple Voice Chat" "simple-voice-chat" "voicechat.jar"
-          download_modrinth "DropHeads" "dropheads" "DropHeads.jar"
-          download_modrinth "SkinsRestorer" "skinsrestorer" "SkinsRestorer.jar"
-          download_modrinth "TAB" "tab" "TAB.jar"
-          download_modrinth "Shopkeepers" "shopkeepers" "Shopkeepers.jar"
-
-          echo "Plugins presentes:"
-          find . -maxdepth 1 -type f -name '*.jar' -printf '%f\n' | sort
-
-      - name: Configurar servidor
+      - name: Baixar Paper 1.21.11
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
           cd minecraft
-          touch server.properties
 
-          if grep -q '^online-mode=' server.properties; then
-            sed -i 's/^online-mode=.*/online-mode=false/' server.properties
-          else
-            echo 'online-mode=false' >> server.properties
+          API="https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds"
+
+          echo "Consultando builds estáveis do Paper..."
+
+          response="$(curl -fsSL \
+            -H "User-Agent: OdisseiaMinecraftServer/1.0" \
+            "$API")"
+
+          BUILD="$(
+            printf '%s' "$response" \
+              | jq -r '
+                  if type == "array" then
+                    [.[] | select((.channel // "") == "STABLE")][0].id // empty
+                  else
+                    empty
+                  end
+                '
+          )"
+
+          if [[ -z "$BUILD" ]]; then
+            echo "::error::A API do Paper não retornou uma build estável para 1.21.11."
+            printf '%s\n' "$response" | jq '.[0:3]' || true
+            exit 1
           fi
 
-          if ! grep -q '^server-port=' server.properties; then
-            echo 'server-port=25565' >> server.properties
+          echo "Build selecionada: $BUILD"
+
+          BUILD_INFO="$(curl -fsSL \
+            -H "User-Agent: OdisseiaMinecraftServer/1.0" \
+            "$API/$BUILD")"
+
+          DOWNLOAD_URL="$(
+            printf '%s' "$BUILD_INFO" \
+              | jq -r '
+                  .. | objects
+                  | select(."downloads" != null)
+                  | ."downloads".["server:default"].url // empty
+                ' | head -n 1
+          )"
+
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            DOWNLOAD_URL="$(
+              printf '%s' "$BUILD_INFO" \
+                | jq -r '.. | objects | .url? // empty' \
+                | grep -E '\.jar($|\?)' \
+                | head -n 1 || true
+            )"
           fi
 
-          if ! grep -q '^enable-command-block=' server.properties; then
-            echo 'enable-command-block=true' >> server.properties
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            echo "::error::Não foi possível localizar o download do JAR do Paper."
+            printf '%s\n' "$BUILD_INFO" | jq .
+            exit 1
           fi
 
-          mkdir -p logs
+          curl -fL --retry 3 \
+            "$DOWNLOAD_URL" \
+            -o paper.jar
 
-      - name: Iniciar Playit
-        env:
-          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+          test -s paper.jar
+
+          echo "Paper baixado:"
+          ls -lh paper.jar
+
+      - name: Preparar configurações de inicialização
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
-          if [ -z "${PLAYIT_SECRET:-}" ]; then
-            echo "::warning::PLAYIT_SECRET não configurado; túnel não iniciado."
-            exit 0
+          cd minecraft
+
+          if [[ ! -f eula.txt ]]; then
+            echo "eula=true" > eula.txt
           fi
 
-          docker pull ghcr.io/playit-cloud/playit-agent:latest
+          # Mantém o arquivo restaurado se ele já existir.
+          if [[ ! -f server.properties ]]; then
+            cat > server.properties <<'PROPERTIES'
+          server-port=25565
+          online-mode=false
+          enable-command-block=true
+          motd=Servidor Minecraft
+          view-distance=8
+          simulation-distance=6
+          max-players=20
+          PROPERTIES
+          fi
+
+          if [[ ! -f start.sh ]]; then
+            cat > start.sh <<'START'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          exec java -Xms2G -Xmx8G -jar paper.jar --nogui
+          START
+          fi
+
+          chmod +x start.sh
+
+          echo "Verificando mundos e plugins antes de iniciar..."
+
+          for world in world world_nether world_the_end; do
+            if [[ -d "$world" ]]; then
+              echo "OK: $world"
+            else
+              echo "Aviso: diretório $world não existe."
+            fi
+          done
+
+          echo "JARs encontrados: $(find plugins -maxdepth 1 -type f -iname '*.jar' | wc -l)"
+
+      - name: Iniciar Playit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -z "${PLAYIT_SECRET:-}" ]]; then
+            echo "::error::O secret PLAYIT_SECRET está vazio."
+            exit 1
+          fi
+
+          docker version
 
           docker run -d \
-            --name playit \
+            --name playit-agent \
+            --restart unless-stopped \
             --network host \
             -e SECRET="$PLAYIT_SECRET" \
             ghcr.io/playit-cloud/playit-agent:latest
 
           sleep 5
-          docker logs playit || true
+          docker logs --tail 50 playit-agent || true
 
-      - name: Executar Minecraft e fazer backups
-        env:
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+      - name: Iniciar servidor e fazer backups periódicos
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
-          export RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID="$GDRIVE_FOLDER_ID"
           cd minecraft
 
-          nohup java -Xms2G -Xmx8G -jar paper.jar --nogui \
-            > server.log 2>&1 &
-
+          # Executa o servidor em segundo plano para permitir os backups.
+          bash start.sh > ../logs/server.log 2>&1 &
           SERVER_PID=$!
-          echo "$SERVER_PID" > server.pid
+
+          cleanup() {
+            echo "Encerrando o servidor..."
+
+            if kill -0 "$SERVER_PID" 2>/dev/null; then
+              kill -TERM "$SERVER_PID" 2>/dev/null || true
+              sleep 10
+              kill -KILL "$SERVER_PID" 2>/dev/null || true
+            fi
+
+            docker stop playit-agent >/dev/null 2>&1 || true
+          }
+
+          trap cleanup EXIT
 
           backup_server() {
-            echo "Criando backup..."
+            local stamp
+            stamp="$(date -u +%Y%m%d-%H%M%S)"
+            local archive="../downloads/server-backup-${stamp}.tar.gz"
+            local temp_archive="${archive}.tmp"
 
-            local archive="server-backup-current.tar.gz"
-            local tar_status=0
+            echo "Criando backup em $stamp..."
 
-            rm -f "$archive"
-
-            # O servidor continua ativo. O tar pode retornar código 1
-            # se algum arquivo mudar durante a leitura; verificamos
-            # separadamente se o arquivo compactado continua legível.
+            # O servidor pode alterar arquivos durante o tar.
+            # A validade real do arquivo é verificada antes do upload.
             set +e
             tar --warning=no-file-changed \
-              --ignore-failed-read \
-              -czf "$archive" \
-              --exclude='./server.log' \
-              --exclude='./logs/*' \
-              --exclude='./server-backup-*.tar.gz' \
-              --exclude='./server.pid' \
-              --exclude='./paper.jar' \
+              -czf "$temp_archive" \
+              --exclude='./logs' \
+              --exclude='./cache' \
+              --exclude='./downloads' \
               .
             tar_status=$?
             set -e
 
-            if [ ! -s "$archive" ] || ! tar -tzf "$archive" >/dev/null 2>&1; then
-              echo "::error::O arquivo de backup não foi gerado corretamente."
-              rm -f "$archive"
+            if [[ ! -s "$temp_archive" ]]; then
+              echo "::warning::O backup ficou vazio; ignorando."
+              rm -f "$temp_archive"
               return 1
             fi
 
-            if [ "$tar_status" -ne 0 ]; then
-              echo "::warning::Alguns arquivos mudaram durante a compactação. O arquivo passou na validação, mas pode não representar um estado perfeitamente consistente do mundo."
+            if ! tar -tzf "$temp_archive" >/dev/null; then
+              echo "::warning::O backup criado não passou na validação."
+              rm -f "$temp_archive"
+              return 1
             fi
 
-            # Atualiza o backup anterior somente depois de criar e validar
-            # o novo arquivo local.
-            if timeout 120s rclone copyto \
-              gdrive2:server-backup-latest.tar.gz \
-              gdrive2:server-backup-previous.tar.gz; then
-              echo "Backup anterior preservado."
-            else
-              echo "Não foi possível copiar o backup anterior; continuando."
+            mv "$temp_archive" "$archive"
+
+            if (( tar_status != 0 )); then
+              echo "::warning::O tar reportou alterações durante a leitura; o arquivo passou na validação."
             fi
 
-            timeout 180s rclone copyto \
+            # Mantém o último backup válido como previous.
+            if rclone copyto \
+                gdrive2:server-backup-latest.tar.gz \
+                ../downloads/server-backup-previous.tar.gz \
+                --retries 2; then
+
+              rclone copyto \
+                ../downloads/server-backup-previous.tar.gz \
+                gdrive2:server-backup-previous.tar.gz \
+                --retries 2 || true
+            fi
+
+            # Atualiza o backup mais recente.
+            rclone copyto \
               "$archive" \
-              gdrive2:server-backup-latest.tar.gz
+              gdrive2:server-backup-latest.tar.gz \
+              --retries 3 \
+              --low-level-retries 5
 
-            rm -f "$archive"
-            echo "Backup mais recente enviado ao Google Drive."
+            echo "Backup enviado para o Google Drive."
           }
 
-          echo "Aguardando o Minecraft iniciar..."
+          echo "Aguardando 120 segundos para a inicialização..."
           sleep 120
 
           if ! kill -0 "$SERVER_PID" 2>/dev/null; then
             echo "::error::O servidor encerrou durante a inicialização."
-            tail -n 120 server.log || true
+            tail -n 150 ../logs/server.log || true
             exit 1
           fi
 
-          backup_server
+          backup_server || echo "::warning::O backup inicial falhou."
 
-          for CYCLE in $(seq 1 32); do
-            sleep 600
+          # O servidor roda por aproximadamente 5h25.
+          END_TIME=$(( $(date +%s) + 19500 ))
+          NEXT_BACKUP=$(( $(date +%s) + 600 ))
 
-            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-              echo "::warning::O Minecraft encerrou inesperadamente."
-              tail -n 120 server.log || true
+          while kill -0 "$SERVER_PID" 2>/dev/null; do
+            NOW="$(date +%s)"
+
+            if (( NOW >= END_TIME )); then
+              echo "Tempo de execução atingido."
               break
             fi
 
-            backup_server
+            if (( NOW >= NEXT_BACKUP )); then
+              backup_server || echo "::warning::Um backup periódico falhou."
+              NEXT_BACKUP=$(( $(date +%s) + 600 ))
+            fi
+
+            sleep 15
           done
 
           echo "Criando backup final..."
+          backup_server || echo "::warning::O backup final falhou."
 
-          if kill -0 "$SERVER_PID" 2>/dev/null; then
-            backup_server || echo "::error::Falha ao criar o backup final."
-            kill "$SERVER_PID" || true
-            sleep 10
-          fi
+          echo "Últimas linhas do log:"
+          tail -n 100 ../logs/server.log || true
 
-          docker logs playit || true
-          tail -n 80 server.log || true
+      - name: Mostrar resumo em caso de falha
+        if: failure()
+        shell: bash
+        run: |
+          echo "O workflow falhou. Resumo dos arquivos locais:"
+          find minecraft -maxdepth 2 -type f \
+            \( -name '*.jar' -o -name 'server.properties' -o -name 'eula.txt' \) \
+            -printf '%p (%s bytes)\n' 2>/dev/null | head -200 || true
+
+          echo
+          echo "Últimas linhas do log do servidor:"
+          tail -n 150 logs/server.log 2>/dev/null || true
+
+          echo
+          echo "Logs do Playit:"
+          docker logs --tail 80 playit-agent 2>/dev/null || true
