@@ -16,10 +16,8 @@ jobs:
       MC_VERSION: "1.21.11"
       SERVER_DIR: minecraft
 
-      # ZIP atualizado dos plugins
       PLUGIN_ZIP_ID: "18k_jycr7HE0cgaVgnzgCBSqRJ9gIFcNb"
 
-      # IDs dos mundos no Google Drive
       WORLD_ID: "1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-"
       NETHER_ID: "1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM"
       END_ID: "1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt"
@@ -36,7 +34,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y rclone jq unzip tar gzip curl python3-pip
+          sudo apt-get install -y rclone jq unzip tar gzip curl python3-pip file
 
       - name: Verificar Docker existente
         shell: bash
@@ -201,91 +199,74 @@ jobs:
           echo "Plugins encontrados:"
           find "$SERVER_DIR/plugins" -maxdepth 1 -type f -name '*.jar' -printf '%f\n'
 
-      - name: Baixar Paper 1.21.11
+      - name: Baixar Paper 1.21.11 pela API oficial Fill
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          USER_AGENT="Minecraft-Test-GitHub-Actions/1.0"
+          PROJECT="paper"
+          VERSION="$MC_VERSION"
           PAPER_JAR="$SERVER_DIR/paper.jar"
 
-          echo "Tentando baixar Paper pela API V3..."
+          USER_AGENT="Minecraft-Test-GitHub-Actions/1.0.0 (https://docs.github.com/actions)"
 
-          V3_API="https://api.papermc.io/v3/projects/paper/versions/$MC_VERSION"
+          API_URL="https://fill.papermc.io/v3/projects/$PROJECT/versions/$VERSION/builds"
 
-          if curl -fL --retry 3 \
-            -A "$USER_AGENT" \
-            "$V3_API/builds" \
-            -o /tmp/paper-builds-v3.json; then
+          echo "Consultando builds oficiais do Paper $VERSION..."
 
-            BUILD="$(
-              jq -er '
-                [.builds[] | select(.channel == "STABLE")]
-                | max_by(.id)
-                | .id
-              ' /tmp/paper-builds-v3.json
-            )"
+          curl -fL --retry 3 \
+            --retry-delay 3 \
+            -H "User-Agent: $USER_AGENT" \
+            -H "Accept: application/json" \
+            "$API_URL" \
+            -o /tmp/paper-builds.json
 
-            DOWNLOAD_URL="$(
-              curl -fL --retry 3 \
-                -A "$USER_AGENT" \
-                "$V3_API/builds/$BUILD" |
-                jq -er '.downloads["server:default"].url'
-            )"
+          echo "Selecionando a última build estável..."
 
-            if curl -fL --retry 3 \
-              -A "$USER_AGENT" \
-              "$DOWNLOAD_URL" \
-              -o "$PAPER_JAR"; then
-              echo "Paper baixado pela API V3. Build: $BUILD"
-            else
-              rm -f "$PAPER_JAR"
-            fi
-          else
-            echo "::warning::API V3 indisponível. Tentando API V2."
+          if jq -e '.ok == false' /tmp/paper-builds.json >/dev/null 2>&1; then
+            echo "::error::A API PaperMC retornou um erro."
+            jq . /tmp/paper-builds.json
+            exit 1
           fi
 
-          # Alternativa pela API V2 caso a V3 ou o download falhe.
+          BUILD_INFO="$(
+            jq -cer '
+              first(.[] | select(.channel == "STABLE"))
+              // error("Nenhuma build estável encontrada")
+            ' /tmp/paper-builds.json
+          )"
+
+          BUILD="$(jq -er '.id' <<< "$BUILD_INFO")"
+
+          DOWNLOAD_URL="$(
+            jq -er '.downloads["server:default"].url' <<< "$BUILD_INFO"
+          )"
+
+          EXPECTED_SHA256="$(
+            jq -er '.downloads["server:default"].checksums.sha256' <<< "$BUILD_INFO"
+          )"
+
+          echo "Build selecionada: $BUILD"
+          echo "Baixando Paper..."
+
+          curl -fL --retry 3 \
+            --retry-delay 3 \
+            -H "User-Agent: $USER_AGENT" \
+            "$DOWNLOAD_URL" \
+            -o "$PAPER_JAR"
+
           if [[ ! -s "$PAPER_JAR" ]]; then
-            echo "Tentando baixar Paper pela API V2..."
-
-            V2_API="https://api.papermc.io/v2/projects/paper/versions/$MC_VERSION"
-
-            curl -fL --retry 3 \
-              -A "$USER_AGENT" \
-              "$V2_API" \
-              -o /tmp/paper-version-v2.json
-
-            BUILD="$(
-              curl -fL --retry 3 \
-                -A "$USER_AGENT" \
-                "$V2_API/builds" |
-                jq -er '.builds | map(select(.channel == "default")) | last'
-            )"
-
-            BUILD_URL="$V2_API/builds/$BUILD"
-
-            curl -fL --retry 3 \
-              -A "$USER_AGENT" \
-              "$BUILD_URL" \
-              -o /tmp/paper-build-v2.json
-
-            DOWNLOAD_NAME="$(
-              jq -er '.downloads.application.name' /tmp/paper-build-v2.json
-            )"
-
-            DOWNLOAD_URL="https://api.papermc.io/v2/projects/paper/versions/$MC_VERSION/builds/$BUILD/downloads/$DOWNLOAD_NAME"
-
-            curl -fL --retry 3 \
-              -A "$USER_AGENT" \
-              "$DOWNLOAD_URL" \
-              -o "$PAPER_JAR"
-
-            echo "Paper baixado pela API V2. Build: $BUILD"
+            echo "::error::O arquivo Paper baixado está vazio."
+            exit 1
           fi
 
-          if [[ ! -s "$PAPER_JAR" ]]; then
-            echo "::error::Não foi possível baixar o Paper."
+          echo "Verificando integridade SHA256..."
+
+          ACTUAL_SHA256="$(sha256sum "$PAPER_JAR" | awk '{print $1}')"
+
+          if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+            echo "::error::O SHA256 do Paper não corresponde ao valor oficial."
+            rm -f "$PAPER_JAR"
             exit 1
           fi
 
@@ -295,7 +276,7 @@ jobs:
             exit 1
           fi
 
-          echo "Download do Paper concluído."
+          echo "Paper $VERSION build $BUILD baixado e verificado com sucesso."
 
       - name: Preparar configurações
         shell: bash
