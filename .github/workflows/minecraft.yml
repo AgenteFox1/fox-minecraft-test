@@ -15,7 +15,11 @@ jobs:
     env:
       MC_VERSION: "1.21.11"
       SERVER_DIR: minecraft
-      PLUGIN_ZIP_ID: "14OF6wa80pT4VOJch7-8kdvs42jRnCj78"
+
+      # Novo arquivo de plugins
+      PLUGIN_ZIP_ID: "18k_jycr7HE0cgaVgnzgCBSqRJ9gIFcNb"
+
+      # IDs dos mundos no Google Drive
       WORLD_ID: "1Mf7FoRa_P9Q9idPExaTa6S1hQz5sPbT-"
       NETHER_ID: "1TDVch0u3PyuYrYtTTIYsroJm5dcQNrQM"
       END_ID: "1SMTsfqiLlW3R3FpcgfQYZSNwhBw0JJgt"
@@ -32,16 +36,18 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y rclone jq unzip tar gzip curl
+          sudo apt-get install -y rclone jq unzip tar gzip curl python3-pip
 
       - name: Verificar Docker existente
         shell: bash
         run: |
           set -Eeuo pipefail
+
           if ! command -v docker >/dev/null 2>&1; then
             echo "::error::Docker não está disponível no runner."
             exit 1
           fi
+
           docker info
 
       - name: Configurar Google Drive
@@ -63,8 +69,10 @@ jobs:
           }
 
           mkdir -p "$HOME/.config/rclone"
+
           printf '%s' "$RCLONE_CONFIG_B64" |
             base64 --decode > "$HOME/.config/rclone/rclone.conf"
+
           chmod 600 "$HOME/.config/rclone/rclone.conf"
 
           echo "RCLONE_CONFIG_GDRIVE2_ROOT_FOLDER_ID=$GDRIVE_FOLDER_ID" >> "$GITHUB_ENV"
@@ -118,9 +126,10 @@ jobs:
 
           find_drive_path_by_id() {
             local file_id="$1"
+
             rclone lsjson gdrive2: --recursive --files-only --metadata |
               jq -er --arg id "$file_id" \
-                'first(.[] | select((.ID // .ID) == $id) | .Path) // empty'
+                'first(.[] | select(.ID == $id) | .Path) // empty'
           }
 
           restore_world() {
@@ -138,6 +147,7 @@ jobs:
 
             unzip -tq "/tmp/minecraft-restore/$name.zip"
             unzip -oq "/tmp/minecraft-restore/$name.zip" -d "$SERVER_DIR"
+
             echo "Mundo $name restaurado."
           }
 
@@ -145,74 +155,34 @@ jobs:
           restore_world "world_nether" "$NETHER_ID"
           restore_world "world_the_end" "$END_ID"
 
-      - name: Localizar e restaurar ZIP de plugins
+      - name: Baixar e restaurar ZIP de plugins
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          echo "Listando arquivos do Google Drive para localizar o ZIP..."
+          echo "Instalando ferramenta de download do Google Drive..."
 
-          rclone lsjson gdrive2: \
-            --recursive --files-only --metadata \
-            > /tmp/drive-files.json
+          python3 -m pip install --break-system-packages gdown
 
-          echo "Procurando primeiro pelo ID configurado..."
+          echo "Baixando o novo pacote de plugins..."
 
-          PLUGIN_PATH="$(
-            jq -r --arg id "$PLUGIN_ZIP_ID" '
-              [.[] | select((.ID // "") == $id) | .Path]
-              | first // empty
-            ' /tmp/drive-files.json
-          )"
+          PLUGIN_URL="https://drive.google.com/uc?id=$PLUGIN_ZIP_ID"
 
-          if [[ -n "$PLUGIN_PATH" ]]; then
-            echo "Pacote localizado pelo ID."
-          else
-            echo "::warning::O ID configurado não foi encontrado. Procurando ZIPs pelo nome."
+          gdown "$PLUGIN_URL" -O /tmp/plugins.zip
 
-            mapfile -t CANDIDATES < <(
-              jq -r '
-                .[]
-                | select((.Path // "") | test("plugin"; "i"))
-                | select((.Path // "") | test("\\.zip$"; "i"))
-                | .Path
-              ' /tmp/drive-files.json
-            )
-
-            if [[ "${#CANDIDATES[@]}" -eq 1 ]]; then
-              PLUGIN_PATH="${CANDIDATES[0]}"
-              echo "Encontrado um único ZIP com 'plugin' no nome: $PLUGIN_PATH"
-
-            elif [[ "${#CANDIDATES[@]}" -gt 1 ]]; then
-              echo "::error::Foram encontrados vários ZIPs relacionados a plugins. É necessário identificar o correto."
-              printf 'Candidato: %s\n' "${CANDIDATES[@]}"
-              echo "Lista de outros ZIPs disponíveis:"
-              jq -r '.[] | select((.Path // "") | test("\\.zip$"; "i")) | .Path' \
-                /tmp/drive-files.json || true
-              exit 1
-
-            else
-              echo "::error::Nenhum ZIP com 'plugin' no nome foi encontrado."
-              echo "Arquivos ZIP visíveis para esta conta:"
-              jq -r '
-                .[]
-                | select((.Path // "") | test("\\.zip$"; "i"))
-                | "Nome: \(.Path) | ID: \(.ID // "não informado")"
-              ' /tmp/drive-files.json || true
-              echo "Confira se o pacote está dentro da pasta configurada em GDRIVE_FOLDER_ID."
-              exit 1
-            fi
+          if [[ ! -s /tmp/plugins.zip ]]; then
+            echo "::error::O download do ZIP de plugins falhou."
+            echo "Confira se o arquivo está compartilhado como 'Qualquer pessoa com o link'."
+            exit 1
           fi
 
-          rclone copyto "gdrive2:$PLUGIN_PATH" /tmp/plugins.zip \
-            --retries 3 --low-level-retries 5
-
           if ! unzip -tq /tmp/plugins.zip; then
-            echo "::error::O arquivo localizado não é um ZIP válido."
+            echo "::error::O arquivo baixado não é um ZIP válido."
             exit 1
           fi
 
           mkdir -p /tmp/plugins-extraidos "$SERVER_DIR/plugins"
+
           unzip -oq /tmp/plugins.zip -d /tmp/plugins-extraidos
 
           mapfile -d '' JARS < <(
@@ -230,12 +200,16 @@ jobs:
 
           echo "Total de plugins JAR restaurados: ${#JARS[@]}"
 
+          echo "Plugins encontrados:"
+          find "$SERVER_DIR/plugins" -maxdepth 1 -type f -name '*.jar' -printf '%f\n'
+
       - name: Baixar Paper 1.21.11
         shell: bash
         run: |
           set -Eeuo pipefail
 
           API="https://api.papermc.io/v3/projects/paper/versions/$MC_VERSION"
+
           curl -fsSL "$API/builds" -o /tmp/paper-builds.json
 
           BUILD="$(
@@ -249,7 +223,9 @@ jobs:
           )"
 
           curl -fL --retry 3 "$DOWNLOAD_URL" -o "$SERVER_DIR/paper.jar"
+
           test -s "$SERVER_DIR/paper.jar"
+
           echo "Paper baixado. Build: $BUILD"
 
       - name: Preparar configurações
@@ -288,6 +264,7 @@ jobs:
           }
 
           docker pull ghcr.io/playit-cloud/playit-agent:latest
+
           docker rm -f playit-agent >/dev/null 2>&1 || true
 
           docker run -d \
@@ -298,6 +275,7 @@ jobs:
             ghcr.io/playit-cloud/playit-agent:latest
 
           sleep 5
+
           docker ps --filter name=playit-agent
 
       - name: Executar servidor e criar backups
@@ -308,6 +286,7 @@ jobs:
 
           java -Xms2G -Xmx8G -jar paper.jar --nogui > server.log 2>&1 &
           SERVER_PID=$!
+
           START_TIME="$(date +%s)"
           MAX_RUNTIME=$((325 * 60))
 
@@ -317,6 +296,7 @@ jobs:
             echo "Criando backup do servidor..."
 
             local tar_status=0
+
             set +e
             tar --warning=no-file-changed --ignore-failed-read \
               -czf "$archive" -C "$GITHUB_WORKSPACE" "$SERVER_DIR"
@@ -357,6 +337,7 @@ jobs:
 
           while kill -0 "$SERVER_PID" 2>/dev/null; do
             ELAPSED=$(($(date +%s) - START_TIME))
+
             if (( ELAPSED >= MAX_RUNTIME )); then
               break
             fi
@@ -369,6 +350,7 @@ jobs:
           done
 
           backup_server
+
           kill "$SERVER_PID" 2>/dev/null || true
 
           for _ in {1..30}; do
@@ -377,6 +359,7 @@ jobs:
           done
 
           kill -9 "$SERVER_PID" 2>/dev/null || true
+
           echo "Servidor encerrado e backup final enviado."
 
       - name: Diagnóstico em caso de falha
@@ -392,11 +375,5 @@ jobs:
           echo "===== LOG DO PLAYIT ====="
           docker logs --tail 100 playit-agent 2>&1 || true
 
-          echo "===== ARQUIVOS ZIP ENCONTRADOS ====="
-          if [[ -f /tmp/drive-files.json ]]; then
-            jq -r '
-              .[]
-              | select((.Path // "") | test("\\.zip$"; "i"))
-              | "Nome: \(.Path) | ID: \(.ID // "não informado")"
-            ' /tmp/drive-files.json || true
-          fi
+          echo "===== ARQUIVOS RESTAURADOS ====="
+          find minecraft/plugins -maxdepth 1 -type f -name '*.jar' -printf '%f\n' 2>/dev/null || true
