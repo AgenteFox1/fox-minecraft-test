@@ -16,7 +16,7 @@ jobs:
       MC_VERSION: "1.21.11"
       SERVER_DIR: minecraft
 
-      # Novo arquivo de plugins
+      # ZIP atualizado dos plugins
       PLUGIN_ZIP_ID: "18k_jycr7HE0cgaVgnzgCBSqRJ9gIFcNb"
 
       # IDs dos mundos no Google Drive
@@ -161,10 +161,9 @@ jobs:
           set -Eeuo pipefail
 
           echo "Instalando ferramenta de download do Google Drive..."
-
           python3 -m pip install --break-system-packages gdown
 
-          echo "Baixando o novo pacote de plugins..."
+          echo "Baixando pacote de plugins..."
 
           PLUGIN_URL="https://drive.google.com/uc?id=$PLUGIN_ZIP_ID"
 
@@ -172,7 +171,6 @@ jobs:
 
           if [[ ! -s /tmp/plugins.zip ]]; then
             echo "::error::O download do ZIP de plugins falhou."
-            echo "Confira se o arquivo está compartilhado como 'Qualquer pessoa com o link'."
             exit 1
           fi
 
@@ -198,7 +196,7 @@ jobs:
             cp -f "$jar" "$SERVER_DIR/plugins/"
           done
 
-          echo "Total de plugins JAR restaurados: ${#JARS[@]}"
+          echo "Total de arquivos JAR restaurados: ${#JARS[@]}"
 
           echo "Plugins encontrados:"
           find "$SERVER_DIR/plugins" -maxdepth 1 -type f -name '*.jar' -printf '%f\n'
@@ -208,25 +206,96 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          API="https://api.papermc.io/v3/projects/paper/versions/$MC_VERSION"
+          USER_AGENT="Minecraft-Test-GitHub-Actions/1.0"
+          PAPER_JAR="$SERVER_DIR/paper.jar"
 
-          curl -fsSL "$API/builds" -o /tmp/paper-builds.json
+          echo "Tentando baixar Paper pela API V3..."
 
-          BUILD="$(
-            jq -er '[.builds[] | select(.channel == "STABLE")] | max_by(.id) | .id' \
-              /tmp/paper-builds.json
-          )"
+          V3_API="https://api.papermc.io/v3/projects/paper/versions/$MC_VERSION"
 
-          DOWNLOAD_URL="$(
-            curl -fsSL "$API/builds/$BUILD" |
-              jq -er '.downloads["server:default"].url'
-          )"
+          if curl -fL --retry 3 \
+            -A "$USER_AGENT" \
+            "$V3_API/builds" \
+            -o /tmp/paper-builds-v3.json; then
 
-          curl -fL --retry 3 "$DOWNLOAD_URL" -o "$SERVER_DIR/paper.jar"
+            BUILD="$(
+              jq -er '
+                [.builds[] | select(.channel == "STABLE")]
+                | max_by(.id)
+                | .id
+              ' /tmp/paper-builds-v3.json
+            )"
 
-          test -s "$SERVER_DIR/paper.jar"
+            DOWNLOAD_URL="$(
+              curl -fL --retry 3 \
+                -A "$USER_AGENT" \
+                "$V3_API/builds/$BUILD" |
+                jq -er '.downloads["server:default"].url'
+            )"
 
-          echo "Paper baixado. Build: $BUILD"
+            if curl -fL --retry 3 \
+              -A "$USER_AGENT" \
+              "$DOWNLOAD_URL" \
+              -o "$PAPER_JAR"; then
+              echo "Paper baixado pela API V3. Build: $BUILD"
+            else
+              rm -f "$PAPER_JAR"
+            fi
+          else
+            echo "::warning::API V3 indisponível. Tentando API V2."
+          fi
+
+          # Alternativa pela API V2 caso a V3 ou o download falhe.
+          if [[ ! -s "$PAPER_JAR" ]]; then
+            echo "Tentando baixar Paper pela API V2..."
+
+            V2_API="https://api.papermc.io/v2/projects/paper/versions/$MC_VERSION"
+
+            curl -fL --retry 3 \
+              -A "$USER_AGENT" \
+              "$V2_API" \
+              -o /tmp/paper-version-v2.json
+
+            BUILD="$(
+              curl -fL --retry 3 \
+                -A "$USER_AGENT" \
+                "$V2_API/builds" |
+                jq -er '.builds | map(select(.channel == "default")) | last'
+            )"
+
+            BUILD_URL="$V2_API/builds/$BUILD"
+
+            curl -fL --retry 3 \
+              -A "$USER_AGENT" \
+              "$BUILD_URL" \
+              -o /tmp/paper-build-v2.json
+
+            DOWNLOAD_NAME="$(
+              jq -er '.downloads.application.name' /tmp/paper-build-v2.json
+            )"
+
+            DOWNLOAD_URL="https://api.papermc.io/v2/projects/paper/versions/$MC_VERSION/builds/$BUILD/downloads/$DOWNLOAD_NAME"
+
+            curl -fL --retry 3 \
+              -A "$USER_AGENT" \
+              "$DOWNLOAD_URL" \
+              -o "$PAPER_JAR"
+
+            echo "Paper baixado pela API V2. Build: $BUILD"
+          fi
+
+          if [[ ! -s "$PAPER_JAR" ]]; then
+            echo "::error::Não foi possível baixar o Paper."
+            exit 1
+          fi
+
+          if ! file "$PAPER_JAR" | grep -qi 'java archive\|zip archive'; then
+            echo "::error::O arquivo baixado não parece ser um JAR válido."
+            file "$PAPER_JAR" || true
+            exit 1
+          fi
+
+          echo "Download do Paper concluído."
 
       - name: Preparar configurações
         shell: bash
